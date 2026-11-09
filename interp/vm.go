@@ -932,8 +932,13 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			if len(g.tryStack) > tryDepth {
 				g.tryStack = g.tryStack[:tryDepth]
 			}
+			// applyValue leaves g.sp at the callee's frame top (opRet does not
+			// restore it), so rewind to the trycatch's own stack position
+			// before pushing the result. Otherwise every enclosing call
+			// reads shifted operands.
+			g.sp = tf.sp
 			stack = g.stack
-			sp = g.sp
+			sp = tf.sp
 			stack[sp] = res
 			sp++
 
