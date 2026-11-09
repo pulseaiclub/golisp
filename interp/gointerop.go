@@ -115,6 +115,11 @@ func funcName(rv reflect.Value) string {
 	return rv.Type().String()
 }
 
+// FuncName derives the Lisp-visible name for a Go function: the bare
+// identifier of its Go name (e.g. "Add"), or the type string when the name
+// cannot be recovered.
+func FuncName(fn any) string { return funcName(reflect.ValueOf(fn)) }
+
 func typeNameOf(rv reflect.Value) string {
 	t := rv.Type()
 	for t.Kind() == reflect.Ptr {

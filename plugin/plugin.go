@@ -1,4 +1,6 @@
-package interp
+// Package plugin provides the namespaced plugin-host API for embedding Lisp
+// as a plugin language on top of interp.Interp.
+package plugin
 
 import (
 	"errors"
@@ -6,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+
+	"golisp/interp"
 )
 
 // Plugin is the small contract implemented by an embeddable Lisp plugin.
@@ -35,13 +39,13 @@ func (p PluginFunc) Setup(h *PluginHost) error {
 // under the plugin namespace unless it is already qualified.
 type pluginExport struct {
 	id        uint32
-	previous  Value
-	installed Value
+	previous  interp.Value
+	installed interp.Value
 	bound     bool
 }
 
 type PluginHost struct {
-	interp  *Interp
+	g       *interp.Interp
 	name    string
 	mu      sync.Mutex
 	closed  bool
@@ -50,19 +54,19 @@ type PluginHost struct {
 	seen    map[uint32]bool
 }
 
-// NewPluginHost creates a namespaced host for one plugin.
-func (g *Interp) NewPluginHost(name string) *PluginHost {
+// NewHost creates a namespaced host for one plugin.
+func NewHost(g *interp.Interp, name string) *PluginHost {
 	name = strings.TrimSpace(name)
 	name = strings.Trim(name, ".")
-	return &PluginHost{interp: g, name: name, seen: make(map[uint32]bool)}
+	return &PluginHost{g: g, name: name, seen: make(map[uint32]bool)}
 }
 
-// LoadPlugin creates a host, runs Setup, and closes it if setup fails.
-func (g *Interp) LoadPlugin(p Plugin) (*PluginHost, error) {
+// Load creates a host, runs Setup, and closes it if setup fails.
+func Load(g *interp.Interp, p Plugin) (*PluginHost, error) {
 	if p == nil {
 		return nil, errors.New("nil plugin")
 	}
-	h := g.NewPluginHost(p.Name())
+	h := NewHost(g, p.Name())
 	if err := p.Setup(h); err != nil {
 		_ = h.Close()
 		return nil, fmt.Errorf("plugin %q setup: %w", p.Name(), err)
@@ -71,7 +75,7 @@ func (g *Interp) LoadPlugin(p Plugin) (*PluginHost, error) {
 }
 
 func (h *PluginHost) qualified(name string) (string, error) {
-	if h == nil || h.interp == nil {
+	if h == nil || h.g == nil {
 		return "", errors.New("nil plugin host")
 	}
 	name = strings.TrimSpace(name)
@@ -98,21 +102,21 @@ func validatePluginFunction(fn any) error {
 
 // Func exports a Go function under the plugin namespace.
 func (h *PluginHost) bind(name string, value any) error {
-	id := internString(name)
+	id := interp.SymID(interp.Symbol(name))
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
 		return errors.New("plugin host is closed")
 	}
 	seen := h.seen[id]
-	var previous Value
+	var previous interp.Value
 	var bound bool
 	if !seen {
-		previous, bound = h.interp.symbolValue(id)
+		previous, bound = h.g.Lookup(id)
 	}
 	h.mu.Unlock()
 
-	installed := h.interp.Def(name, value)
+	installed := h.g.Def(name, value)
 
 	h.mu.Lock()
 	if !seen && !h.seen[id] {
@@ -167,7 +171,7 @@ func (h *PluginHost) Import(prefix string, fns ...any) error {
 		if err := validatePluginFunction(fn); err != nil {
 			return err
 		}
-		short := funcName(reflect.ValueOf(fn))
+		short := interp.FuncName(fn)
 		name := prefix + "." + short
 		if err := h.Func(name, fn); err != nil {
 			return err
@@ -177,14 +181,14 @@ func (h *PluginHost) Import(prefix string, fns ...any) error {
 }
 
 // Eval evaluates plugin Lisp source in the shared interpreter.
-func (h *PluginHost) Eval(source string) (Value, error) {
+func (h *PluginHost) Eval(source string) (interp.Value, error) {
 	h.mu.Lock()
 	closed := h.closed
 	h.mu.Unlock()
 	if closed {
-		return Nil, errors.New("plugin host is closed")
+		return interp.Nil, errors.New("plugin host is closed")
 	}
-	return h.interp.EvalString(source)
+	return h.g.EvalString(source)
 }
 
 // OnClose adds a cleanup callback. Callbacks execute in reverse registration
@@ -222,14 +226,14 @@ func (h *PluginHost) Close() error {
 
 	for i := len(exports) - 1; i >= 0; i-- {
 		ex := exports[i]
-		current, _ := h.interp.symbolValue(ex.id)
+		current, _ := h.g.Lookup(ex.id)
 		if current != ex.installed {
 			continue // another owner replaced this export after registration
 		}
 		if ex.bound {
-			h.interp.setSymbol(ex.id, ex.previous)
+			h.g.SetGlobal(ex.id, ex.previous)
 		} else {
-			h.interp.setSymbol(ex.id, 0)
+			h.g.SetGlobal(ex.id, 0)
 		}
 	}
 

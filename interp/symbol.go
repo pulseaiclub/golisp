@@ -138,6 +138,14 @@ func (g *Interp) setSymbol(id uint32, v Value) {
 	g.setGlobal(id, v)
 }
 
+// Lookup returns the global binding for an interned symbol id. It reports
+// ok=false when the symbol is unbound instead of raising a Lisp error.
+func (g *Interp) Lookup(id uint32) (Value, bool) { return g.symbolValue(id) }
+
+// SetGlobal binds an interned symbol id directly. v == 0 (the zero Value)
+// unbinds the symbol.
+func (g *Interp) SetGlobal(id uint32, v Value) { g.setGlobal(id, v) }
+
 func (g *Interp) symIsConstant(id uint32) bool {
 	g.ensureSymbolState(id)
 	return g.constants[id]

@@ -1,9 +1,11 @@
-package interp
+package plugin
 
 import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"golisp/interp"
 )
 
 type testPlugin struct {
@@ -25,9 +27,9 @@ func (p testPlugin) Setup(h *PluginHost) error {
 }
 
 func TestPluginHost(t *testing.T) {
-	g := NewInterp()
+	g := interp.NewInterp()
 	var closed []string
-	h, err := g.LoadPlugin(testPlugin{closed: &closed})
+	h, err := Load(g, testPlugin{closed: &closed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,10 +37,11 @@ func TestPluginHost(t *testing.T) {
 		t.Fatalf("name = %q", h.Name())
 	}
 	v, err := h.Eval(`(demo.add demo.answer 1)`)
-	if err != nil || Fixnum(v) != 42 {
+	if err != nil || interp.Fixnum(v) != 42 {
 		t.Fatalf("plugin eval = %v, err=%v", v, err)
 	}
-	if _, ok := g.symbolValue(internString("add")); ok {
+	symAdd := interp.SymID(interp.Symbol("add"))
+	if _, ok := g.Lookup(symAdd); ok {
 		t.Fatal("plugin export leaked into unqualified namespace")
 	}
 	if err := h.OnClose(func() error {
@@ -50,7 +53,8 @@ func TestPluginHost(t *testing.T) {
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := g.symbolValue(internString("demo.add")); ok {
+	symQualified := interp.SymID(interp.Symbol("demo.add"))
+	if _, ok := g.Lookup(symQualified); ok {
 		t.Fatal("plugin export survived Close")
 	}
 	if got := reflect.ValueOf(closed).Interface(); !reflect.DeepEqual(got, []string{"extra", "plugin"}) {
@@ -64,8 +68,24 @@ func TestPluginHost(t *testing.T) {
 	}
 }
 
+func TestPluginStateIsIsolated(t *testing.T) {
+	first := interp.NewInterp()
+	second := interp.NewInterp()
+	h, err := Load(first, testPlugin{closed: new([]string)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	if v, err := h.Eval(`(demo.add demo.answer 1)`); err != nil || interp.Fixnum(v) != 42 {
+		t.Fatalf("first interp eval = %v, err=%v", v, err)
+	}
+	if _, err := second.EvalString(`demo.answer`); err == nil {
+		t.Fatal("plugin binding leaked to second interpreter")
+	}
+}
+
 func TestPluginSetupFailureClosesHost(t *testing.T) {
-	g := NewInterp()
+	g := interp.NewInterp()
 	called := false
 	p := PluginFunc{
 		PluginName: "broken",
@@ -79,7 +99,7 @@ func TestPluginSetupFailureClosesHost(t *testing.T) {
 			return errors.New("setup failed")
 		},
 	}
-	if _, err := g.LoadPlugin(p); err == nil || !called {
+	if _, err := Load(g, p); err == nil || !called {
 		t.Fatalf("setup failure err=%v cleanup=%v", err, called)
 	}
 }

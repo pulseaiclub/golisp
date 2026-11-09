@@ -40,14 +40,6 @@ func TestInterpStateIsIsolated(t *testing.T) {
 		t.Fatal("Go binding leaked to second interpreter")
 	}
 
-	h, err := first.LoadPlugin(testPlugin{closed: new([]string)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h.Close()
-	if _, err := second.EvalString(`demo.answer`); err == nil {
-		t.Fatal("plugin binding leaked to second interpreter")
-	}
 }
 
 func TestInterpConcurrentCreationAndEvaluation(t *testing.T) {
