@@ -145,11 +145,10 @@ func (g *Interp) installCore() {
 		b := &Builtin{name: d.name, f: d.f, opcode: d.op, nargs: d.narg}
 		v := g.box(boxBuiltin{b})
 		id := internString(d.name)
-		symMu.Lock()
-		symNames[id].binding = v
-		symNames[id].builtin = b
-		symNames[id].constant = true
-		symMu.Unlock()
+		g.ensureSymbolState(id)
+		g.globals[id] = v
+		g.builtins[id] = b
+		g.constants[id] = true
 	}
 }
 

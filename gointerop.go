@@ -135,6 +135,9 @@ func goValueToLisp(g *Interp, v reflect.Value) Value {
 		}
 		v = v.Elem()
 	}
+	if v.Type() == reflect.TypeOf(Value(0)) {
+		return v.Interface().(Value)
+	}
 	switch v.Kind() {
 	case reflect.Bool:
 		return BoolValue(v.Bool())
@@ -178,6 +181,9 @@ func goValueToLisp(g *Interp, v reflect.Value) Value {
 }
 
 func lispToGo(v Value, t reflect.Type) (reflect.Value, error) {
+	if t == reflect.TypeOf(Value(0)) {
+		return reflect.ValueOf(v), nil
+	}
 	if v == Nil {
 		return reflect.Zero(t), nil
 	}
@@ -568,10 +574,8 @@ func bGoCallable(g *Interp, args []Value) Value {
 
 // globalOrZero returns a global binding, or 0 when it is unbound.
 func (g *Interp) globalOrZero(id uint32) Value {
-	symMu.RLock()
-	v := symNames[id].binding
-	symMu.RUnlock()
-	return v
+	g.ensureSymbolState(id)
+	return g.globals[id]
 }
 
 // GoMember resolves prefix.member, falling back to the global held by full

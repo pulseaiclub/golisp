@@ -5,22 +5,18 @@ import (
 	"sync"
 )
 
-// Symbol table: interned symbols with binding slots.
+// Symbol table: globally interned names and IDs. Runtime bindings live in each
+// Interp so separate VMs do not share mutable Lisp state.
 
 type symbol struct {
-	name     string
-	binding  Value // global value; 0 means unbound
-	function Value // macro function for define-macro symbols
-	macro    bool
-	constant bool
-	builtin  *Builtin // non-nil when binding is a core builtin (for inlining)
-	slot     int      // index into Interp.globals cache, -1 = none
+	name string
 }
 
 var (
-	symMu     sync.RWMutex
-	symNames  []symbol
-	symByName = map[string]uint32{}
+	symMu       sync.RWMutex
+	symNames    []symbol
+	symByName   = map[string]uint32{}
+	wellKnownMu sync.Once
 )
 
 // Pre-interned symbols (order matters only for well-known ids).
@@ -63,27 +59,29 @@ var (
 )
 
 func internWellKnown() {
-	for _, p := range []struct {
-		name string
-		dst  *uint32
-	}{
-		{"lambda", &symLambda}, {"quote", &symQuote}, {"if", &symIf},
-		{"begin", &symBegin}, {"set!", &symSet}, {"define", &symDefine},
-		{"define-macro", &symDefineMac}, {"let", &symLet}, {"let*", &symLetStar},
-		{"letrec", &symLetRec}, {"cond", &symCond}, {"and", &symAnd},
-		{"or", &symOr}, {"not", &symNot}, {"while", &symWhile},
-		{"dotimes", &symDoTimes}, {"quasiquote", &symQuasiQuote},
-		{"unquote", &symUnquote}, {"unquote-splicing", &symUnquoteS},
-		{"label", &symLabel}, {"prog1", &symProg1}, {"trycatch", &symTryCatch},
-		{"*macroexpand*", &symMacroExpand},
-		{"type-error", &symTypeError}, {"arg-error", &symArgError},
-		{"unbound-error", &symUnboundError}, {"bounds-error", &symBoundsError},
-		{"divide-error", &symDivideError}, {"io-error", &symIOError},
-		{"parse-error", &symParseError}, {"error", &symError},
-		{"#t", &symT}, {"#f", &symF},
-	} {
-		*p.dst = internString(p.name)
-	}
+	wellKnownMu.Do(func() {
+		for _, p := range []struct {
+			name string
+			dst  *uint32
+		}{
+			{"lambda", &symLambda}, {"quote", &symQuote}, {"if", &symIf},
+			{"begin", &symBegin}, {"set!", &symSet}, {"define", &symDefine},
+			{"define-macro", &symDefineMac}, {"let", &symLet}, {"let*", &symLetStar},
+			{"letrec", &symLetRec}, {"cond", &symCond}, {"and", &symAnd},
+			{"or", &symOr}, {"not", &symNot}, {"while", &symWhile},
+			{"dotimes", &symDoTimes}, {"quasiquote", &symQuasiQuote},
+			{"unquote", &symUnquote}, {"unquote-splicing", &symUnquoteS},
+			{"label", &symLabel}, {"prog1", &symProg1}, {"trycatch", &symTryCatch},
+			{"*macroexpand*", &symMacroExpand},
+			{"type-error", &symTypeError}, {"arg-error", &symArgError},
+			{"unbound-error", &symUnboundError}, {"bounds-error", &symBoundsError},
+			{"divide-error", &symDivideError}, {"io-error", &symIOError},
+			{"parse-error", &symParseError}, {"error", &symError},
+			{"#t", &symT}, {"#f", &symF},
+		} {
+			*p.dst = internString(p.name)
+		}
+	})
 }
 
 func internString(name string) uint32 {
@@ -99,7 +97,7 @@ func internString(name string) uint32 {
 		return id
 	}
 	id = uint32(len(symNames))
-	symNames = append(symNames, symbol{name: name, slot: -1})
+	symNames = append(symNames, symbol{name: name})
 	symByName[name] = id
 	return id
 }
@@ -122,18 +120,14 @@ func symNameByID(id uint32) string {
 	return symNames[id].name
 }
 
-// globalBinding returns the global binding slot for a symbol.
 func (g *Interp) globalBinding(id uint32) *Value {
-	symMu.RLock()
-	v := &symNames[id].binding
-	symMu.RUnlock()
-	return v
+	g.ensureSymbolState(id)
+	return &g.globals[id]
 }
 
 func (g *Interp) symbolValue(id uint32) (Value, bool) {
-	symMu.RLock()
-	defer symMu.RUnlock()
-	v := symNames[id].binding
+	g.ensureSymbolState(id)
+	v := g.globals[id]
 	if v == 0 {
 		return 0, false
 	}
@@ -141,15 +135,12 @@ func (g *Interp) symbolValue(id uint32) (Value, bool) {
 }
 
 func (g *Interp) setSymbol(id uint32, v Value) {
-	symMu.Lock()
-	symNames[id].binding = v
-	symMu.Unlock()
+	g.setGlobal(id, v)
 }
 
 func (g *Interp) symIsConstant(id uint32) bool {
-	symMu.RLock()
-	defer symMu.RUnlock()
-	return symNames[id].constant
+	g.ensureSymbolState(id)
+	return g.constants[id]
 }
 
 // ---------------------------------------------------------------------------

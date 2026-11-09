@@ -1,6 +1,7 @@
 package golisp
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -17,12 +18,18 @@ type Interp struct {
 	tryStack []tryFrame
 	cellPool []*FrameCell // GC roots for all frame cells
 
-	globals []Value // cache of global bindings by symbol id (lazily filled)
+	globals   []Value    // global bindings by symbol id; zero means unbound
+	macros    []Value    // macro functions by symbol id
+	builtins  []*Builtin // builtin metadata by symbol id
+	constants []bool     // immutable core binding flags by symbol id
 
 	stdout io.Writer
 	reader *strings.Reader // for repl
 
 	macroExpandEnabled bool
+
+	// ctx is the context of the active host invocation.
+	ctx context.Context
 }
 
 type tryFrame struct {
@@ -70,49 +77,53 @@ func (g *Interp) pop() Value {
 
 // --- globals ---
 
+func (g *Interp) ensureSymbolState(id uint32) {
+	n := int(id) + 1
+	if len(g.globals) >= n {
+		return
+	}
+	g.globals = append(g.globals, make([]Value, n-len(g.globals))...)
+	g.macros = append(g.macros, make([]Value, n-len(g.macros))...)
+	g.builtins = append(g.builtins, make([]*Builtin, n-len(g.builtins))...)
+	g.constants = append(g.constants, make([]bool, n-len(g.constants))...)
+}
+
 func (g *Interp) getGlobal(id uint32) Value {
-	symMu.RLock()
-	defer symMu.RUnlock()
-	v := symNames[id].binding
+	g.ensureSymbolState(id)
+	v := g.globals[id]
 	if v == 0 {
-		raise(symUnboundError, "variable %s has no value", symNames[id].name)
+		raise(symUnboundError, "variable %s has no value", SymName(SymbolValue(id)))
 	}
 	return v
 }
 
 func (g *Interp) setGlobal(id uint32, v Value) {
-	symMu.Lock()
-	symNames[id].binding = v
-	symMu.Unlock()
+	g.ensureSymbolState(id)
+	g.globals[id] = v
 }
 
 func (g *Interp) symIsMacro(id uint32) bool {
-	symMu.RLock()
-	defer symMu.RUnlock()
-	return symNames[id].macro
+	g.ensureSymbolState(id)
+	return g.macros[id] != 0
 }
 
 func (g *Interp) registerMacro(id uint32, fn Value) {
-	symMu.Lock()
-	symNames[id].macro = true
-	symNames[id].function = fn
-	symNames[id].binding = fn
-	symMu.Unlock()
+	g.ensureSymbolState(id)
+	g.macros[id] = fn
+	g.globals[id] = fn
 }
 
 func (g *Interp) macroExpand(x Value) Value {
 	id := SymID(carFast(x))
-	symMu.RLock()
-	mfn := symNames[id].function
-	symMu.RUnlock()
+	g.ensureSymbolState(id)
+	mfn := g.macros[id]
 	args := listToSlice(cdrFast(x))
 	return g.applyValue(mfn, args)
 }
 
 func (g *Interp) builtinOf(id uint32) *Builtin {
-	symMu.RLock()
-	defer symMu.RUnlock()
-	return symNames[id].builtin
+	g.ensureSymbolState(id)
+	return g.builtins[id]
 }
 
 // --- evaluation entry points ---
@@ -123,39 +134,49 @@ func (g *Interp) Eval(x Value) (Value, error) {
 }
 
 func (g *Interp) EvalString(src string) (Value, error) {
-	forms, err := g.ReadAll(src)
-	if err != nil {
-		return Nil, err
-	}
-	var result Value = Nil
-	for _, f := range forms {
-		result, err = g.EvalTop(f)
-		if err != nil {
-			return Nil, err
-		}
-	}
-	return result, nil
+	return g.EvalStringContext(g.Context(), src)
 }
 
 // EvalTop evaluates a top-level form, handling define-macro etc.
 func (g *Interp) EvalTop(x Value) (result Value, err error) {
+	sp0 := g.sp
+	tryTop := len(g.tryStack)
+	cellTop := len(g.cellPool)
+	g.push(x)
 	defer func() {
 		if r := recover(); r != nil {
 			if le, ok := r.(*LispError); ok {
 				err = le
 				result = Nil
-				return
+			} else {
+				panic(r)
 			}
-			panic(r)
 		}
+		g.sp = sp0
+		if len(g.tryStack) > tryTop {
+			g.tryStack = g.tryStack[:tryTop]
+		}
+		g.popCells(cellTop)
 	}()
 	c := &compiler{g: g}
 	fn := c.CompileTop(x)
+
+	fnValue := g.box(boxFunction{fn})
+	g.push(fnValue)
 	if Debug {
 		fmt.Fprint(g.stdout, g.Dump(fn))
 	}
 	result = g.apply(fn, nil)
 	return result, nil
+}
+
+// EvalContext evaluates one top-level form after checking the caller's context.
+// An interpreter remains single-owner during an evaluation call.
+func (g *Interp) EvalContext(ctx context.Context, x Value) (Value, error) {
+	return g.withInvocation(ctx, func() (Value, error) {
+		g.checkContext()
+		return g.EvalTop(x)
+	})
 }
 
 // LoadFile reads and evaluates a lisp file.

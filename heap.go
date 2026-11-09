@@ -3,7 +3,6 @@ package golisp
 import (
 	"fmt"
 	"reflect"
-	"sync"
 	"unsafe"
 )
 
@@ -17,7 +16,8 @@ import (
 //
 //	cons:   header | car | cdr           (3 cells)
 //	vector: header | elems...            (1+n cells)
-//	string: header | blobOff | blobLen   (3 cells)
+//	string: header | byteLen | inline bytes (2+ cells)
+
 //	boxed:  header | *Boxed              (2 cells)
 //
 // header: low 3 bits = objType, rest = total cells, bit62 = mark.
@@ -280,43 +280,43 @@ func VectorSet(v Value, i int, x Value) {
 
 // --- strings ---
 
-// The string arena is shared by every interpreter. Strings are immutable and
-// the arena is append-only, so a single process-wide blob is safe and lets
-// string access work without a back-pointer to the owning interpreter.
-var (
-	stringArenaMu sync.Mutex
-	stringArena   []byte
-)
-
+// String objects store their immutable payload in the managed heap. The first
+// cell stores the byte length, followed by enough cells to hold the bytes.
 func (g *Interp) NewString(s string) Value {
-	stringArenaMu.Lock()
-	off := len(stringArena)
-	stringArena = append(stringArena, s...)
-	stringArenaMu.Unlock()
-	idx := g.heap.allocCells(3)
+	cells := 2 + (len(s)+7)/8
+	idx := g.heap.allocCells(cells)
 	ch := g.heap.chunks[idx.chunk()]
-	ch[idx.off()] = makeHeader(tString, 3)
-	ch[idx.off()+1] = Value(uint64(off))
-	ch[idx.off()+2] = Value(uint64(len(s)))
+	off := idx.off()
+	ch[off] = makeHeader(tString, cells)
+	ch[off+1] = Value(uint64(len(s)))
+	if len(s) > 0 {
+		data := unsafe.Slice((*byte)(unsafe.Pointer(&ch[off+2])), len(s))
+		copy(data, s)
+	}
 	return g.heap.cellValue(idx)
 }
 
+func stringData(v Value) []byte {
+	p := heapObjPtr(v)
+	n := int(uint64(*(*Value)(unsafe.Pointer(uintptr(unsafe.Pointer(p)) + 8))))
+	return unsafe.Slice((*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(p))+16)), n)
+}
+
 func StringBytes(v Value) []byte {
-	s := GoString(v)
-	return []byte(s)
+	if !IsString(v) {
+		raise(symTypeError, "string: expected string, got %s", typeName(v))
+	}
+	data := stringData(v)
+	out := make([]byte, len(data))
+	copy(out, data)
+	return out
 }
 
 func GoString(v Value) string {
 	if !IsString(v) {
 		raise(symTypeError, "string: expected string, got %s", typeName(v))
 	}
-	p := heapObjPtr(v)
-	off := uint64(*(*Value)(unsafe.Pointer(uintptr(unsafe.Pointer(p)) + 8)))
-	n := uint64(*(*Value)(unsafe.Pointer(uintptr(unsafe.Pointer(p)) + 16)))
-	stringArenaMu.Lock()
-	out := string(stringArena[off : off+n])
-	stringArenaMu.Unlock()
-	return out
+	return string(stringData(v))
 }
 
 // --- boxed ---
@@ -409,20 +409,13 @@ func (g *Interp) maybeGC() {
 func (g *Interp) gc() {
 	h := g.heap
 	// mark roots
-	symMu.RLock()
-	for i := range symNames {
-		if symNames[i].binding != 0 {
-			g.mark(symNames[i].binding)
-		}
-		if symNames[i].function != 0 {
-			g.mark(symNames[i].function)
-		}
-	}
-	symMu.RUnlock()
-	for _, v := range g.stack[:g.sp] {
+	for _, v := range g.globals {
 		g.mark(v)
 	}
-	for _, v := range g.globals {
+	for _, v := range g.macros {
+		g.mark(v)
+	}
+	for _, v := range g.stack[:g.sp] {
 		g.mark(v)
 	}
 	for _, c := range g.cellPool {
@@ -456,7 +449,8 @@ func (g *Interp) gc() {
 				h.bytes += size
 			} else {
 				h.freeCells(arenaPtr(int64(ci)<<32|int64(i)), size)
-				ch[i] = 0
+				// Later sweeps must not interpret dead payload cells as headers.
+				clear(ch[i : i+size])
 			}
 			i += size
 		}
@@ -469,6 +463,7 @@ func (g *Interp) gc() {
 			boxes = append(boxes, b)
 		}
 	}
+	clear(h.boxes[len(boxes):])
 	h.boxes = boxes
 
 	h.threshold = h.bytes * 2

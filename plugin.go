@@ -229,9 +229,7 @@ func (h *PluginHost) Close() error {
 		if ex.bound {
 			h.interp.setSymbol(ex.id, ex.previous)
 		} else {
-			symMu.Lock()
-			symNames[ex.id].binding = 0
-			symMu.Unlock()
+			h.interp.setSymbol(ex.id, 0)
 		}
 	}
 

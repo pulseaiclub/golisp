@@ -196,6 +196,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 	upvals := fn.upvals
 
 	for {
+		g.checkContext()
 		op := code[pc]
 		pc++
 		switch op {
@@ -225,9 +226,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 		case opLoadG:
 			id := decU32(code, pc)
 			pc += 4
-			symMu.RLock()
-			v := symNames[id].binding
-			symMu.RUnlock()
+			g.ensureSymbolState(id)
+			v := g.globals[id]
 			if v == 0 {
 				g.sp = sp
 				raise(symUnboundError, "variable %s has no value", symNameByID(id))
@@ -286,9 +286,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 		case opSetG:
 			id := decU32(code, pc)
 			pc += 4
-			symMu.Lock()
-			symNames[id].binding = stack[sp-1]
-			symMu.Unlock()
+			g.setGlobal(id, stack[sp-1])
 		case opDup:
 			stack[sp] = stack[sp-1]
 			sp++
@@ -477,10 +475,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 			if !IsSymbol(v) {
 				stack[sp-1] = False
 			} else {
-				symMu.RLock()
-				b := symNames[SymID(v)].binding
-				symMu.RUnlock()
-				stack[sp-1] = BoolValue(b != 0)
+				_, bound := g.symbolValue(SymID(v))
+				stack[sp-1] = BoolValue(bound)
 			}
 		case opPairp:
 			stack[sp-1] = BoolValue(IsCons(stack[sp-1]))

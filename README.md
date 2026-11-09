@@ -101,11 +101,20 @@ g.Def("http-get", func(url string) (string, error) {
 })
 ```
 
+## Concurrent interpreters
+
+Each `Interp` owns its Lisp bindings, macro definitions, builtins, heap, VM
+stack, and standard streams. Separate interpreters can be created and evaluated
+concurrently; interned symbol names and IDs are the only shared runtime data.
+An individual `Interp` is single-owner while an evaluation or host call is
+active. Synchronize access if multiple goroutines use the same interpreter.
+Use `EvalStringContext` or `CallContext` when host code needs context checks;
+context cancellation is checked before and during VM execution.
+
 ## Plugin host
 
 For applications that embed Lisp as a plugin language, use `PluginHost` rather
 than scattering direct registrations through the application:
-
 ```go
 type MetricsPlugin struct{}
 
@@ -146,9 +155,19 @@ callbacks.
 
 The host namespace prevents accidental name collisions. It is not a security
 sandbox: a plugin shares the interpreter and can see other registered globals.
-Use a separate `golisp.Interp` when state isolation is required. Do not expose
-filesystem, network, process, or reflection capabilities to untrusted plugins
-unless the host deliberately registers them.
+Use a separate `golisp.Interp` when state isolation is required. The default
+interpreter includes filesystem and networking primitives. Only run trusted
+plugins; separate interpreter state does not restrict operating-system access.
+
+Heap-backed `Value` objects belong to their interpreter. Keep the interpreter
+alive while accessing them from Go (`runtime.KeepAlive` after the last access
+when needed), and retain long-lived callbacks in an interpreter binding so its
+collector can trace them. Do not pass these values to a different interpreter.
+
+The runtime uses NaN-boxed pointer arithmetic. Race detection currently requires
+`go test -race -gcflags=all=-d=checkptr=0 ./...`; default checkptr instrumentation
+rejects the pointer representation. This does not establish memory safety for
+untrusted programs.
 
 ## Go interop
 
