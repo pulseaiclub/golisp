@@ -9,6 +9,7 @@ dialect is based on the femtolisp project.
 cmd/golisp/     command-line demo host and example.lisp
 interp/         the interpreter library (package interp)
 plugin/         optional namespaced plugin-host API (package plugin)
+tcp/            optional TCP builtins, installed with tcp.Register
 ```
 
 Applications import the library as `golisp/interp`:
@@ -40,7 +41,8 @@ and Go forbids cyclic imports.
 - Go interop through a single `Def` entry point (see below).
 - A namespaced `PluginHost` API for embeddable Go plugins in the optional
   `golisp/plugin` package.
-- File and TCP streams, plus a small set of I/O helpers in the standard library.
+- File streams plus a small set of I/O helpers in the standard library; TCP
+  streams ship as the optional `golisp/tcp` package.
 
 ## Build and run
 
@@ -87,7 +89,15 @@ Convenience wrappers are defined in Lisp on top of those primitives:
 `read-lines`, `file->string`, `string->file`, `with-file`, `call-with-stream`.
 
 TCP uses the same stream object, so once a connection is accepted the read and
-write primitives are identical.
+write primitives are identical. The TCP builtins are not part of the core
+interpreter; install them from the host side:
+
+```go
+import "golisp/tcp"
+
+g := interp.NewInterp()
+tcp.Register(g)
+```
 
 ```lisp
 ;; server
@@ -183,7 +193,8 @@ callbacks.
 The host namespace prevents accidental name collisions. It is not a security
 sandbox: a plugin shares the interpreter and can see other registered globals.
 Use a separate `interp.Interp` when state isolation is required. The default
-interpreter includes filesystem and networking primitives. Only run trusted
+interpreter includes filesystem primitives; networking primitives are the
+optional `golisp/tcp` package. Only run trusted
 plugins; separate interpreter state does not restrict operating-system access.
 
 Heap-backed `Value` objects belong to their interpreter. Keep the interpreter

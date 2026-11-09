@@ -151,6 +151,13 @@ func streamFor(v Value, what string) *IOStream {
 	return s
 }
 
+// NewStream wraps Go I/O handles as a Lisp stream value. Any side may be
+// nil; buffering is set up lazily so a write-only or read-only stream never
+// allocates the other side.
+func (g *Interp) NewStream(name, kind string, rd io.Reader, wr io.Writer, closer io.Closer) Value {
+	return g.box(boxStream{&IOStream{name: name, kind: kind, rd: rd, wr: wr, closer: closer}})
+}
+
 // --- standard streams -------------------------------------------------------
 
 func (g *Interp) installStdStreams() {
@@ -339,4 +346,20 @@ func bWriteLine(g *Interp, args []Value) Value {
 
 func bStreamName(g *Interp, args []Value) Value {
 	return g.NewString(streamFor(args[0], "stream.name").name)
+}
+
+// bIOWrite keeps the historical (io.write stream values...) shape but now
+// honours the stream argument; without a stream it writes to stdout.
+func bIOWrite(g *Interp, args []Value) Value {
+	if len(args) >= 1 && AsStream(args[0]) != nil {
+		return bWrite(g, args)
+	}
+	var sb strings.Builder
+	for _, a := range args {
+		printValue(&sb, a, false)
+	}
+	if _, err := g.stdout.Write([]byte(sb.String())); err != nil {
+		raise(symIOError, "io.write: %s", err)
+	}
+	return Nil
 }

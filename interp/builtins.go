@@ -111,13 +111,6 @@ func (g *Interp) installCore() {
 		{"file-exists?", 0, 1, bFileExists},
 		{"delete-file", 0, 1, bDeleteFile},
 
-		// tcp
-		{"tcp-connect", 0, 2, bTCPConnect},
-		{"tcp-listen", 0, 2, bTCPListen},
-		{"tcp-accept", 0, 1, bTCPAccept},
-		{"listener-port", 0, 1, bListenerPort},
-		{"listener-addr", 0, 1, bListenerAddr},
-
 		// misc
 		{"error", 0, -1, bError},
 		{"raise", 0, 1, bRaise},

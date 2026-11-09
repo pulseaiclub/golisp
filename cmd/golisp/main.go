@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"golisp/interp"
+	"golisp/tcp"
 )
 
 // Person is a demo Go struct exposed to Lisp.
@@ -25,6 +26,7 @@ func Add(a, b int) int { return a + b }
 
 func main() {
 	g := interp.NewInterp()
+	tcp.Register(g) // install the optional TCP builtins
 
 	// One call per Go entity. No name given: it is derived from Go.
 	g.Def("", Add)

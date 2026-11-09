@@ -284,6 +284,10 @@ and cannot be redefined (`constant?` is `#t` for them).
 
 ### Networking
 
+The TCP builtins live in the optional `golisp/tcp` package; the host calls
+`tcp.Register(g)` once after creating the interpreter. Everything else in
+this document is part of the core.
+
 | Function | Args | Notes |
 |---|---|---|
 | `tcp-connect` | 2 | `(tcp-connect host port)`, returns a stream |
