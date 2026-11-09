@@ -1,4 +1,4 @@
-package golisp
+package interp
 
 // Macro definitions kept in the standard library. They are deliberately
 // small; expansion happens before bytecode generation.

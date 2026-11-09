@@ -1,4 +1,4 @@
-package golisp
+package interp
 
 import "testing"
 
@@ -33,7 +33,7 @@ func TestDottedMemberAccess(t *testing.T) {
 		{`(p.Move 5 5) p.X`, "6"},
 		{`p.Sum`, "21"},   // zero-arg method read as a value
 		{`(p.Sum)`, "21"}, // and called
-		{`(p.Scale 2)`, "#<go *golisp.point>"},
+		{`(p.Scale 2)`, "#<go *interp.point>"},
 		{`p.Tags.kind`, "demo"},        // map entry through a dotted name
 		{`(string.length "abc")`, "3"}, // ordinary dotted global still works
 	}

@@ -1,4 +1,4 @@
-package golisp
+package interp
 
 // Expansion pass: rewrite surface syntax into a small core language
 // (quote, if, begin, lambda, set!, define, and the runtime primitives).

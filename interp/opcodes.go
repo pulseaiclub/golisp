@@ -1,4 +1,4 @@
-package golisp
+package interp
 
 // Bytecode opcodes.
 const (

@@ -1,4 +1,4 @@
-package golisp
+package interp
 
 // Conservative source-level constant propagation. This is the direct
 // analogue of main.lisp's pre-optimize pass, applied after syntax expansion

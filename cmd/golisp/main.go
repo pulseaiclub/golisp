@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"golisp"
+	"golisp/interp"
 )
 
 // Person is a demo Go struct exposed to Lisp.
@@ -24,7 +24,7 @@ func (p *Person) Greet(prefix string) string {
 func Add(a, b int) int { return a + b }
 
 func main() {
-	g := golisp.NewInterp()
+	g := interp.NewInterp()
 
 	// One call per Go entity. No name given: it is derived from Go.
 	g.Def("", Add)
