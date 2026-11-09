@@ -1162,7 +1162,10 @@ func (c *compiler) compileApp(e *emitter, env [][]uint32, tail bool, x Value) {
 	// builtin inlining
 	if IsSymbol(head) {
 		id := SymID(head)
-		if b := g.builtinOf(id); b != nil && b.opcode != 0 && !c.inEnv(id, env) {
+		// A module may shadow a builtin; the ambient inline table must not
+		// win over the module's own binding.
+		if b := g.builtinOf(id); b != nil && b.opcode != 0 && !c.inEnv(id, env) &&
+			(c.env == nil || c.env.get(id) == 0) {
 			if c.compileBuiltinApp(e, env, b, args, nargs) {
 				return
 			}

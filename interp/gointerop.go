@@ -587,13 +587,28 @@ func (g *Interp) globalOrZero(id uint32) Value {
 // when prefix is not a registered Go value. This keeps string.length and
 // friends working while allowing person.Name.
 func (g *Interp) GoMember(prefix, full Value, member string, callable bool) Value {
-	if pv := g.globalOrZero(SymID(prefix)); pv != 0 && IsBoxed(pv) {
+	pv := g.globalOrZero(SymID(prefix))
+	fv := g.globalOrZero(SymID(full))
+	return g.goMemberResolve(pv, full, member, fv, callable)
+}
+
+// goMemberResolve is GoMember with caller-resolved values: the VM reads the
+// prefix and full bindings from the calling function's namespace, so dotted
+// access works inside modules too.
+func (g *Interp) goMemberResolve(pv Value, full Value, member string, fv Value, callable bool) Value {
+	if pv != 0 && IsBoxed(pv) {
 		if _, _, ok := AsGoValue(pv); ok {
 			return goMemberGet(g, pv, member, callable)
 		}
+		// Module namespaces are tables: obj.member reads a key.
+		if t := AsTable(pv); t != nil {
+			if v, ok := t.Get(Symbol(member)); ok {
+				return v
+			}
+		}
 	}
-	if v := g.globalOrZero(SymID(full)); v != 0 {
-		return v
+	if fv != 0 {
+		return fv
 	}
 	raise(symUnboundError, "variable %s has no value", SymName(full))
 	return Nil
@@ -605,6 +620,10 @@ func (g *Interp) GoSet(prefix, full Value, member string, val Value) {
 	if pv := g.globalOrZero(SymID(prefix)); pv != 0 && IsBoxed(pv) {
 		if _, _, ok := AsGoValue(pv); ok {
 			goMemberSet(g, pv, member, val)
+			return
+		}
+		if t := AsTable(pv); t != nil {
+			t.Put(Symbol(member), val)
 			return
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,6 +28,13 @@ type Interp struct {
 	reader *strings.Reader // for repl
 
 	macroExpandEnabled bool
+
+	// dynamic module state: the cache of loaded modules, the stack of
+	// modules being loaded, and the stack of files being evaluated (used
+	// to resolve relative import paths).
+	modules   map[string]*Module
+	modStack  []*Module
+	fileStack []string
 
 	// ctx is the context of the active host invocation.
 	ctx context.Context
@@ -162,7 +170,7 @@ func (g *Interp) EvalTop(x Value) (result Value, err error) {
 			}
 		}
 	}()
-	c := &compiler{g: g}
+	c := &compiler{g: g, env: g.currentModule()}
 	fn := c.CompileTop(x)
 
 	fnValue := g.box(boxFunction{fn})
@@ -185,6 +193,9 @@ func (g *Interp) EvalContext(ctx context.Context, x Value) (Value, error) {
 
 // LoadFile reads and evaluates a lisp file.
 func (g *Interp) LoadFile(path string) error {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &LispError{kind: symIOError, msg: fmt.Sprintf("could not open %q", path)}
@@ -193,6 +204,9 @@ func (g *Interp) LoadFile(path string) error {
 	if err != nil {
 		return err
 	}
+	// Track the file so nested loads and imports resolve relative to it.
+	g.fileStack = append(g.fileStack, path)
+	defer func() { g.fileStack = g.fileStack[:len(g.fileStack)-1] }()
 	for _, f := range forms {
 		if _, err := g.EvalTop(f); err != nil {
 			return fmt.Errorf("in file %s: %w", path, err)

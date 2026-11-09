@@ -414,6 +414,9 @@ func (g *Interp) gc() {
 	for _, v := range g.macros {
 		g.mark(v)
 	}
+	for _, m := range g.modules {
+		g.markModule(m)
+	}
 	for _, v := range g.stack[:g.sp] {
 		g.mark(v)
 	}

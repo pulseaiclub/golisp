@@ -505,7 +505,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			if !IsSymbol(v) {
 				stack[sp-1] = False
 			} else {
-				_, bound := g.symbolValue(SymID(v))
+				_, bound := g.dynLookup(SymID(v))
 				stack[sp-1] = BoolValue(bound)
 			}
 		case opPairp:
@@ -887,8 +887,12 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			callable := code[pc+10] != 0
 			pc += 11
 			g.sp = sp
-			v := g.GoMember(SymbolValue(prefixID), SymbolValue(fullID),
-				GoString(member), callable)
+			// Resolve both names in the calling function's namespace so
+			// module code sees module bindings (see goMemberResolve).
+			pv := envValue(envG, g, prefixID)
+			fv := envValue(envG, g, fullID)
+			v := g.goMemberResolve(pv, SymbolValue(fullID),
+				GoString(member), fv, callable)
 			stack = g.stack
 			sp = g.sp
 			stack[sp] = v
@@ -900,9 +904,31 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			member := consts[uint16(code[pc+4])|uint16(code[pc+5])<<8]
 			pc += 6
 			g.sp = sp
+			pv := envValue(envG, g, prefixID)
+			if pv != 0 && IsBoxed(pv) {
+				if _, _, ok := AsGoValue(pv); ok {
+					goMemberSet(g, pv, GoString(member), stack[sp-1])
+					stack = g.stack
+					sp = g.sp
+					continue
+				}
+				// Tables accept dotted writes as key assignments.
+				if t := AsTable(pv); t != nil {
+					t.Put(Symbol(GoString(member)), stack[sp-1])
+					stack = g.stack
+					continue
+				}
+			}
+			// Not a Go value: write the dotted global in the calling
+			// function's namespace.
 			fullName := SymName(SymbolValue(prefixID)) + "." + GoString(member)
-			g.GoSet(SymbolValue(prefixID), SymbolValue(internString(fullName)),
-				GoString(member), stack[sp-1])
+			fullID := internString(fullName)
+			if envG != nil && int(fullID) < len(envG) {
+				envG[fullID] = stack[sp-1]
+			} else {
+				g.envSetGlobal(fn, fullID, stack[sp-1])
+				envG = envGlobalsOf(fn)
+			}
 			stack = g.stack
 			sp = g.sp
 

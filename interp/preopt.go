@@ -83,11 +83,14 @@ func (c *compiler) preOpt(x Value, env []constBinding, tail bool) Value {
 
 	// Fold calls to the arithmetic/comparison primitives when all operands
 	// are immediate constants. We use the existing builtin implementations so
-	// overflow and numeric semantics stay identical to the VM.
+	// overflow and numeric semantics stay identical to the VM. A module that
+	// shadows a builtin name disables folding for that name.
 	args := c.preOptList(cdrFast(x), env)
-	if IsSymbol(head) && c.foldableBuiltin(SymID(head)) {
+	id := SymID(head)
+	if IsSymbol(head) && c.foldableBuiltin(id) &&
+		(c.env == nil || c.env.get(id) == 0) {
 		if vals, ok := constList(args); ok {
-			if b := c.g.builtinOf(SymID(head)); b != nil {
+			if b := c.g.builtinOf(id); b != nil {
 				return b.f(c.g, vals)
 			}
 		}
@@ -99,6 +102,12 @@ func (c *compiler) preOptList(x Value, env []constBinding) Value {
 	g := c.g
 	if x == Nil {
 		return Nil
+	}
+	// A bare dotted tail (e.g. the rest parameter of (lambda args ...) or a
+	// define-macro formal like (name . args)) must pass through unchanged;
+	// collapsing it to nil would rewrite the source form.
+	if !IsCons(x) {
+		return c.preOpt(x, env, false)
 	}
 	var vals []Value
 	for p := x; IsCons(p); p = cdrFast(p) {

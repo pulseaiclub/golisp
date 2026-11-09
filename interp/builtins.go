@@ -140,6 +140,11 @@ func (g *Interp) installCore() {
 		{"go.get", 0, 2, bGoGet},
 		{"go.set!", 0, 3, bGoSet},
 		{"go.apply", 0, -1, bGoCallable},
+
+		// modules. import/import* are macros; these are the primitives.
+		{"import", 0, 1, bImport},
+		{"module-import*", 0, -1, bImportStar},
+		{"module-export", 0, -1, bExport},
 	}
 	for _, d := range defs {
 		b := &Builtin{name: d.name, f: d.f, opcode: d.op, nargs: d.narg}
@@ -253,7 +258,7 @@ func bBoundp(g *Interp, args []Value) Value {
 	if !IsSymbol(v) {
 		return False
 	}
-	_, ok := g.symbolValue(SymID(v))
+	_, ok := g.dynLookup(SymID(v))
 	return BoolValue(ok)
 }
 func bPairp(g *Interp, args []Value) Value { return BoolValue(IsCons(args[0])) }
@@ -598,14 +603,14 @@ func bExit(g *Interp, args []Value) Value {
 func bVoid(g *Interp, args []Value) Value { return unspecified }
 func bTopLevelValue(g *Interp, args []Value) Value {
 	id := SymID(args[0])
-	v, ok := g.symbolValue(id)
+	v, ok := g.dynLookup(id)
 	if !ok {
 		raise(symUnboundError, "variable %s has no value", SymName(args[0]))
 	}
 	return v
 }
 func bSetTopLevelValue(g *Interp, args []Value) Value {
-	g.setSymbol(SymID(args[0]), args[1])
+	g.dynSet(SymID(args[0]), args[1])
 	return args[1]
 }
 func bConstantp(g *Interp, args []Value) Value {
