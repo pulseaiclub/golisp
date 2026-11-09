@@ -3,6 +3,27 @@
 A bytecode-compiling Lisp interpreter and virtual machine written in Go. The
 dialect follows `../femtolisp`.
 
+## Layout
+
+```
+cmd/golisp/     command-line demo host and example.lisp
+interp/         the interpreter library (package interp)
+plugin/         optional namespaced plugin-host API (package plugin)
+```
+
+Applications import the library as `golisp/interp`:
+
+```go
+import "golisp/interp"
+
+g := interp.NewInterp()
+```
+
+The reader, compiler, VM, heap, and builtins intentionally live in one
+package: they are mutually recursive (`eval` compiles at runtime, macro
+expansion calls back into the VM, and the GC walks compiler constants),
+and Go forbids cyclic imports.
+
 ## What is implemented
 
 - NaN-boxed `Value` representation: fixnums, doubles, symbols, characters,
@@ -90,6 +111,7 @@ than crashing the process.
 HTTP is not built in. Register `net/http` with `Def` when you need it:
 
 ```go
+g := interp.NewInterp()
 g.Def("http-get", func(url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -113,14 +135,18 @@ context cancellation is checked before and during VM execution.
 
 ## Plugin host
 
-For applications that embed Lisp as a plugin language, use `PluginHost` rather
-than scattering direct registrations through the application:
+For applications that embed Lisp as a plugin language, import the optional
+`golisp/plugin` package and use `PluginHost` rather than scattering direct
+registrations through the application:
+
 ```go
+import "golisp/plugin"
+
 type MetricsPlugin struct{}
 
 func (MetricsPlugin) Name() string { return "metrics" }
 
-func (MetricsPlugin) Setup(h *golisp.PluginHost) error {
+func (MetricsPlugin) Setup(h *plugin.PluginHost) error {
 	if err := h.Func("add", func(a, b int) int { return a + b }); err != nil {
 		return err
 	}
@@ -133,8 +159,8 @@ func (MetricsPlugin) Setup(h *golisp.PluginHost) error {
 	})
 }
 
-g := golisp.NewInterp()
-h, err := g.LoadPlugin(MetricsPlugin{})
+g := interp.NewInterp()
+h, err := plugin.Load(g, MetricsPlugin{})
 if err != nil {
 	return err
 }
@@ -155,7 +181,7 @@ callbacks.
 
 The host namespace prevents accidental name collisions. It is not a security
 sandbox: a plugin shares the interpreter and can see other registered globals.
-Use a separate `golisp.Interp` when state isolation is required. The default
+Use a separate `interp.Interp` when state isolation is required. The default
 interpreter includes filesystem and networking primitives. Only run trusted
 plugins; separate interpreter state does not restrict operating-system access.
 
@@ -175,6 +201,8 @@ Register anything with one call. When the name is empty it is derived from Go,
 so `Add` becomes `Add` and `*Person` becomes `Person`.
 
 ```go
+import "golisp/interp"
+
 type Person struct {
 	Name string
 	Age  int
@@ -185,7 +213,7 @@ func (p *Person) Greet(prefix string) string { return prefix + ", " + p.Name }
 func (p *Person) Birthday() int              { p.Age++; return p.Age }
 func Add(a, b int) int                        { return a + b }
 
-g := golisp.NewInterp()
+g := interp.NewInterp()
 g.Def("", Add)                                  // => Add
 g.Def("p", &Person{Name: "Ada", Age: 36})       // => p
 g.Import("str", strings.ToUpper, strings.ToLower)

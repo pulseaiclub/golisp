@@ -1,6 +1,6 @@
 ; example-plugin.lisp
-; Run from the golisp directory:
-;   go run ./cmd/golisp ./example-plugin.lisp
+; Run from the repository root:
+;   go run ./cmd/golisp ./cmd/golisp/example.lisp
 ;
 ; The demo host registers:
 ;   Add      - a Go function
