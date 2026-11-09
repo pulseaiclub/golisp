@@ -104,3 +104,62 @@ func TestCallContextCancelsInfiniteFunction(t *testing.T) {
 		t.Fatalf("VM state was not restored: sp=%d try=%d cells=%d", g.sp, len(g.tryStack), len(g.cellPool))
 	}
 }
+
+func TestInvocationRootsFunctionArgumentsDuringGC(t *testing.T) {
+	g := NewInterp()
+	g.Def("force-gc!", func(g *Interp, args []Value) Value {
+		g.gc()
+		return True
+	})
+	if _, err := g.EvalString(`(define (keep x) (begin (force-gc!) x))`); err != nil {
+		t.Fatal(err)
+	}
+	fn, ok := g.symbolValue(internString("keep"))
+	if !ok {
+		t.Fatal("keep was not defined")
+	}
+	arg := g.NewString("argument survives")
+	got, err := g.Call(fn, arg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != arg || GoString(got) != "argument survives" {
+		t.Fatalf("GC changed invocation argument: got %v", got)
+	}
+}
+
+func TestEvaluationRootsCapturedFunctionAndFormsDuringGC(t *testing.T) {
+	g := NewInterp()
+	g.Def("force-gc!", func(g *Interp, args []Value) Value {
+		g.gc()
+		return True
+	})
+	got, err := g.EvalString(`
+		(let ((value "captured"))
+			(let ((fn (lambda () value)))
+				(begin (force-gc!) (fn))))
+		(force-gc!)
+		'(survives-reading)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsCons(got) || carFast(got) != SymbolValue(internString("survives-reading")) {
+		t.Fatalf("forms or captured function were collected: %v", got)
+	}
+}
+
+func TestNestedEvalStringInheritsCancellationContext(t *testing.T) {
+	g := NewInterp()
+	ctx, cancel := context.WithCancel(context.Background())
+	g.Def("nested-cancel!", func(g *Interp, args []Value) Value {
+		cancel()
+		if _, err := g.EvalString(`(+ 1 2)`); !errors.Is(err, context.Canceled) {
+			raise(symError, "nested EvalString error = %v, want context.Canceled", err)
+		}
+		return True
+	})
+	if _, err := g.EvalStringContext(ctx, `(nested-cancel!)`); !errors.Is(err, context.Canceled) {
+		t.Fatalf("outer evaluation error = %v, want context.Canceled", err)
+	}
+}

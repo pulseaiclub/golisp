@@ -43,7 +43,15 @@ type LispError2 = LispError
 // unspecified marks an optional argument that was not supplied.
 var unspecified = Value(qNaN | 7)
 
-func (g *Interp) apply(fn *Function, args []Value) Value {
+func (g *Interp) apply(fn *Function, args []Value) (result Value) {
+	rootSP := g.sp
+	g.push(g.box(boxFunction{fn}))
+	for _, arg := range args {
+		g.push(arg)
+	}
+	defer func() {
+		g.sp = rootSP
+	}()
 	g.maybeGC()
 	if g.sp+len(args)+64 >= len(g.stack) {
 		g.growStack(len(args) + 256)
@@ -51,9 +59,7 @@ func (g *Interp) apply(fn *Function, args []Value) Value {
 	base := g.sp
 	copy(g.stack[base:], args)
 	g.sp = base + len(args)
-	result := g.call(fn, base, 0)
-	g.sp = base
-	return result
+	return g.call(fn, base, 0)
 }
 
 func (g *Interp) growStack(need int) {
@@ -132,6 +138,13 @@ func (g *Interp) setupTailFrameStack(fn2 *Function, base, argsBase, nargs int, s
 }
 
 func (g *Interp) execFrame(fn *Function, base int) (ret Value) {
+	rootTop := len(g.cellPool)
+	fnRoot := &FrameCell{v: g.box(boxFunction{fn})}
+	g.cellPool = append(g.cellPool, fnRoot)
+	tryTop := len(g.tryStack)
+	defer func() {
+		g.popCells(rootTop)
+	}()
 	// set up captured cells
 	var capCells []*FrameCell
 	if len(fn.capSlots) > 0 {
@@ -145,7 +158,7 @@ func (g *Interp) execFrame(fn *Function, base int) (ret Value) {
 	defer func() {
 		if r := recover(); r != nil {
 			if le, ok := r.(*LispError); ok {
-				for len(g.tryStack) > 0 {
+				for len(g.tryStack) > tryTop {
 					tf := g.tryStack[len(g.tryStack)-1]
 					g.tryStack = g.tryStack[:len(g.tryStack)-1]
 					// unwind
@@ -161,7 +174,7 @@ func (g *Interp) execFrame(fn *Function, base int) (ret Value) {
 		}
 	}()
 
-	v := g.run(fn, base, capCells)
+	v := g.run(fn, base, capCells, fnRoot)
 	return v
 }
 
@@ -183,7 +196,7 @@ func (g *Interp) popCells(to int) {
 }
 
 // run executes fn at frame base with pre-initialized capCells.
-func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
+func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *FrameCell) Value {
 	stack := g.stack
 	code := fn.code
 	consts := fn.consts
@@ -659,6 +672,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 			}
 			callBase := sp - n
 			if op == opKnownTCall {
+				fnRoot.v = g.box(boxFunction{callee})
 				g.setupTailFrameStack(callee, base, callBase, n, consts[idx])
 				fn = callee
 				code = fn.code
@@ -713,11 +727,18 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 					continue
 				}
 				if fn2 := AsFunction(f); fn2 != nil {
-					copy(stack[callBase:], stack[sp-n:sp])
-					g.sp = callBase + n
-					// Lisp functions consume the caller's stack region directly.
-					g.prepareFrame(fn2, callBase, f)
-					r := g.execFrame(fn2, callBase)
+					rootTop := len(g.cellPool)
+					g.cellPool = append(g.cellPool, &FrameCell{v: f})
+					r := func() Value {
+						defer func() {
+							g.popCells(rootTop)
+						}()
+						copy(stack[callBase:], stack[sp-n:sp])
+						g.sp = callBase + n
+						// Lisp functions consume the caller's stack region directly.
+						g.prepareFrame(fn2, callBase, f)
+						return g.execFrame(fn2, callBase)
+					}()
 					stack = g.stack
 					sp = callBase
 					stack[sp] = r
@@ -754,6 +775,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 				}
 				if fn2 := AsFunction(f); fn2 != nil {
 					// tail call: reuse our stack frame.
+					fnRoot.v = g.box(boxFunction{fn2})
 					// patch self-name slot before overwriting args
 					if fn2.hasSelf {
 						selfIdx := base + fn2.frameSize
@@ -881,6 +903,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 			}
 
 		case opTryCatch:
+			tryDepth := len(g.tryStack)
 			handler := stack[sp-1]
 			body := stack[sp-2]
 			sp -= 2
@@ -893,7 +916,9 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 				defer func() {
 					if r := recover(); r != nil {
 						if le, ok := r.(*LispError); ok {
-							g.tryStack = g.tryStack[:len(g.tryStack)-1]
+							if len(g.tryStack) > tryDepth {
+								g.tryStack = g.tryStack[:tryDepth]
+							}
 							g.sp = tf.sp
 							g.popCells(tf.cellTop)
 							res = g.applyValue(handler, []Value{g.errorValue(le)})
@@ -904,7 +929,9 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 				}()
 				res = g.applyValue(body, nil)
 			}()
-			g.tryStack = g.tryStack[:len(g.tryStack)-1]
+			if len(g.tryStack) > tryDepth {
+				g.tryStack = g.tryStack[:tryDepth]
+			}
 			stack = g.stack
 			sp = g.sp
 			stack[sp] = res
@@ -968,6 +995,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell) Value {
 			g.stack = stack
 			if IsBoxed(f) {
 				if fn2 := AsFunction(f); fn2 != nil {
+					fnRoot.v = g.box(boxFunction{fn2})
 					g.setupTailFrame(fn2, base, all, f)
 					fn = fn2
 					code = fn.code
@@ -1051,7 +1079,15 @@ func (g *Interp) callValue(f Value, base, n int) Value {
 	return Nil
 }
 
-func (g *Interp) applyValue(f Value, args []Value) Value {
+func (g *Interp) applyValue(f Value, args []Value) (result Value) {
+	rootTop := len(g.cellPool)
+	g.cellPool = append(g.cellPool, &FrameCell{v: f})
+	for _, arg := range args {
+		g.cellPool = append(g.cellPool, &FrameCell{v: arg})
+	}
+	defer func() {
+		g.popCells(rootTop)
+	}()
 	if IsBoxed(f) {
 		if goFn, name, ok := AsGoFunc(f); ok {
 			return callReflect(g, goFn, args, name)

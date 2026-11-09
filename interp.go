@@ -144,19 +144,23 @@ func (g *Interp) EvalTop(x Value) (result Value, err error) {
 	cellTop := len(g.cellPool)
 	g.push(x)
 	defer func() {
+		var recovered any
 		if r := recover(); r != nil {
-			if le, ok := r.(*LispError); ok {
-				err = le
-				result = Nil
-			} else {
-				panic(r)
-			}
+			recovered = r
 		}
 		g.sp = sp0
 		if len(g.tryStack) > tryTop {
 			g.tryStack = g.tryStack[:tryTop]
 		}
 		g.popCells(cellTop)
+		if recovered != nil {
+			if le, ok := recovered.(*LispError); ok {
+				err = le
+				result = Nil
+			} else {
+				panic(recovered)
+			}
+		}
 	}()
 	c := &compiler{g: g}
 	fn := c.CompileTop(x)

@@ -17,7 +17,6 @@ import (
 //	cons:   header | car | cdr           (3 cells)
 //	vector: header | elems...            (1+n cells)
 //	string: header | byteLen | inline bytes (2+ cells)
-
 //	boxed:  header | *Boxed              (2 cells)
 //
 // header: low 3 bits = objType, rest = total cells, bit62 = mark.
