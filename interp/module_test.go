@@ -270,6 +270,44 @@ func TestImportErrors(t *testing.T) {
 	}
 }
 
+func TestFailedImportRetry(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "flaky.lisp", `(error "boom")`)
+	writeModule(t, dir, "main.lisp", `
+(define r1 (trycatch (lambda () (import "flaky.lisp")) (lambda (e) 'failed)))
+`)
+	g := NewInterp()
+	// The module body raises while loading; the failed load must be evicted
+	// from the cache instead of staying as a half-initialized module.
+	if err := g.LoadFile(filepath.Join(dir, "main.lisp")); err != nil {
+		t.Fatal(err)
+	}
+	v, err := g.EvalString(`r1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != Symbol("failed") {
+		t.Fatalf("first attempt = %v", v)
+	}
+
+	// Fix the module on disk: the retry re-evaluates it from scratch.
+	writeModule(t, dir, "flaky.lisp", `(define (f) "ok")(export f)`)
+	writeModule(t, dir, "main2.lisp", `
+(define m (import "flaky.lisp"))
+(define out (m.f))
+`)
+	if err := g.LoadFile(filepath.Join(dir, "main2.lisp")); err != nil {
+		t.Fatalf("retry after failed load: %v", err)
+	}
+	v, err = g.EvalString(`out`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if GoString(v) != "ok" {
+		t.Fatalf("retry = %v", v)
+	}
+}
+
 func TestModuleGCSurvival(t *testing.T) {
 	dir := t.TempDir()
 	writeModule(t, dir, "gc.lisp", `

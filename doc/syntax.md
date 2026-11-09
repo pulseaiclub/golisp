@@ -19,6 +19,7 @@ special forms, builtins, the standard library, and Go interop.
 5. [Macros](#macros)
 6. [Errors and exceptions](#errors-and-exceptions)
 7. [Go interop](#go-interop)
+8. [Modules](#modules)
 
 ---
 
@@ -402,3 +403,72 @@ Rules:
 
 The `go.call`, `go.get`, `go.set!`, and `go.apply` builtins exist for explicit
 use, but dotted syntax is normally shorter.
+
+---
+
+## Modules
+
+Modules are JS-style dynamic modules: a file evaluated once into its own
+namespace, whose exported values are reached through a table — the analogue
+of `require()` / dynamic `import()`.
+
+```lisp
+; lib/math.lisp
+(define (add a b) (+ a b))
+(define (hidden x) (* x 2))     ; private helper
+(define (double x) (add x x))
+(export add)                    ; export an existing binding
+(export pi 3.14)                ; bind and export, like export const
+
+; main.lisp
+(define m (import "lib/math.lisp"))   ; namespace table
+(m.add 1 2)                           ; => 3, dotted access like m.member
+(get m 'add)                          ; => the same function
+
+(import* "lib/math.lisp" add double)  ; import {add, double} from ...
+(add 10 5)                            ; => 15, bound into this namespace
+```
+
+### Forms
+
+| Form | Meaning |
+|---|---|
+| `(import "path")` | evaluate the module once, return its exports table |
+| `(import* "path" n1 n2 ...)` | bind exported names into the current namespace |
+| `(export name)` | export an existing binding |
+| `(export name value)` | bind `name` in the module and export it |
+
+`import` and `import*` are ordinary runtime forms, so they work anywhere —
+including inside function bodies (dynamic import). The underlying primitives
+are `module-import*` and `module-export`; the `export`/`import*` names are
+macros that quote the name arguments.
+
+### Namespace rules
+
+- Each module owns a private namespace for its `define`s and
+  `define-macro`s. Two modules may both define `helper` without clashing,
+  and a module-local macro does not leak to its importer.
+- Free names resolve to the module's own bindings first, then fall back to
+  the ambient globals: builtins, the standard library, and everything the
+  host program or the entry file defined (globalThis semantics).
+- Exported functions remember their module, so internal helpers and private
+  mutable state keep working no matter who calls them later.
+- Names not listed by `export` are private; reading them through the
+  namespace table raises `unbound-error`.
+
+### Path resolution and caching
+
+- A relative path resolves against the directory of the file that contains
+  the `import` (the entry file, or the importing module). Absolute paths are
+  used as given. A spec without an extension also tries the `.lsp` suffix.
+- Modules are cached by absolute path: a second `import` returns the same
+  namespace without re-evaluating the file.
+- Circular imports terminate: an in-progress module is returned with its
+  partial exports, so a module imported mid-cycle only sees names exported
+  before its importer's `import` form (CommonJS behavior).
+
+### Host API
+
+Go hosts can pre-register ambient values with `g.Def` / `g.Import`; modules
+see them the same way they see builtins. Module errors surface as Lisp errors
+prefixed with `in module <file>:`.

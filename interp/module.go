@@ -221,6 +221,12 @@ func (g *Interp) importModule(spec string) Value {
 		m.loading = false
 		g.modStack = g.modStack[:len(g.modStack)-1]
 		g.fileStack = g.fileStack[:len(g.fileStack)-1]
+		if r := recover(); r != nil {
+			// A failed load must not stay cached as a half-initialized
+			// module; the next import may retry.
+			delete(g.modules, path)
+			panic(r)
+		}
 	}()
 	for _, f := range forms {
 		if _, err := g.EvalTop(f); err != nil {
