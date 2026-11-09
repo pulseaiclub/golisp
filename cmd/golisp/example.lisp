@@ -1,4 +1,4 @@
-; example-plugin.lisp
+; example.lisp
 ; Run from the repository root:
 ;   go run ./cmd/golisp ./cmd/golisp/example.lisp
 ;

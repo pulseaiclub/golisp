@@ -38,7 +38,8 @@ and Go forbids cyclic imports.
 - Go primitives and a Lisp standard library covering arithmetic, lists,
   vectors, strings, tables, `apply`, `map`, `filter`, folds, and I/O.
 - Go interop through a single `Def` entry point (see below).
-- A namespaced `PluginHost` API for embeddable Go plugins.
+- A namespaced `PluginHost` API for embeddable Go plugins in the optional
+  `golisp/plugin` package.
 - File and TCP streams, plus a small set of I/O helpers in the standard library.
 
 ## Build and run
