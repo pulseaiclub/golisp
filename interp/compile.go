@@ -130,6 +130,44 @@ type compiler struct {
 	g          *Interp
 	curFn      *Function // function currently being compiled (for capture lookup)
 	atTopLevel bool      // true when compiling the outermost thunk body
+	env        *Module   // module namespace being compiled into (nil = ambient)
+}
+
+// The following helpers resolve names in the namespace of the code being
+// compiled: the module namespace first, then the ambient globals.
+
+func (c *compiler) symIsMacro(id uint32) bool {
+	if c.env != nil && c.env.getMacro(id) != 0 {
+		return true
+	}
+	return c.g.symIsMacro(id)
+}
+
+func (c *compiler) macroExpand(x Value) Value {
+	if c.env != nil {
+		if mfn := c.env.getMacro(SymID(carFast(x))); mfn != 0 {
+			args := listToSlice(cdrFast(x))
+			return c.g.applyValue(mfn, args)
+		}
+	}
+	return c.g.macroExpand(x)
+}
+
+func (c *compiler) registerMacro(id uint32, fn Value) {
+	if c.env != nil {
+		c.env.setMacro(id, fn)
+		return
+	}
+	c.g.registerMacro(id, fn)
+}
+
+func (c *compiler) symbolValue(id uint32) (Value, bool) {
+	if c.env != nil {
+		if v := c.env.get(id); v != 0 {
+			return v, true
+		}
+	}
+	return c.g.symbolValue(id)
 }
 
 // env: stack of frames; each frame is list of symbol ids.
@@ -447,6 +485,7 @@ func (c *compiler) compileF(env [][]uint32, lambda Value) *Function {
 		selfRef:   hasSelf,
 		selfID:    selfName,
 		frameSize: len(frame),
+		env:       c.env,
 	}
 
 	// fill capture metadata
@@ -696,8 +735,8 @@ func (c *compiler) compileIn(e *emitter, env [][]uint32, tail bool, x Value) {
 				c.compileDefineMacro(e, env, x)
 				return
 			}
-			if g.symIsMacro(id) {
-				exp := g.macroExpand(x)
+			if c.symIsMacro(id) {
+				exp := c.macroExpand(x)
 				c.compileIn(e, env, tail, exp)
 				return
 			}
@@ -1110,7 +1149,7 @@ func (c *compiler) compileDefineMacro(e *emitter, env [][]uint32, x Value) {
 	}
 	fn := c.CompileExpr(lambda)
 	v := g.apply(fn, nil)
-	g.registerMacro(SymID(name), v)
+	c.registerMacro(SymID(name), v)
 	e.emit(opLoadNil)
 }
 
@@ -1147,7 +1186,7 @@ func (c *compiler) compileApp(e *emitter, env [][]uint32, tail bool, x Value) {
 		// folded into a direct known-call. Mutable or Go bindings keep the
 		// normal dynamic path.
 		if !c.inEnv(id, env) {
-			if target, ok := g.symbolValue(id); ok {
+			if target, ok := c.symbolValue(id); ok {
 				if fn := AsFunction(target); fn != nil && !fn.hasSelf {
 					idx := e.constIdx(target)
 					for p := args; IsCons(p); p = cdrFast(p) {

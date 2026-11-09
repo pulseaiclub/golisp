@@ -207,6 +207,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 	}
 	sp := base + frameSize
 	upvals := fn.upvals
+	envG := envGlobalsOf(fn) // module namespace, or nil for ambient globals
 
 	for {
 		g.checkContext()
@@ -239,8 +240,15 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 		case opLoadG:
 			id := decU32(code, pc)
 			pc += 4
-			g.ensureSymbolState(id)
-			v := g.globals[id]
+			// Module functions resolve their own namespace first, then fall
+			// back to the ambient globals (like globalThis in JS).
+			var v Value
+			if envG != nil && int(id) < len(envG) {
+				v = envG[id]
+			}
+			if v == 0 && int(id) < len(g.globals) {
+				v = g.globals[id]
+			}
 			if v == 0 {
 				g.sp = sp
 				raise(symUnboundError, "variable %s has no value", symNameByID(id))
@@ -299,7 +307,16 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 		case opSetG:
 			id := decU32(code, pc)
 			pc += 4
-			g.setGlobal(id, stack[sp-1])
+			if envG != nil && int(id) < len(envG) {
+				envG[id] = stack[sp-1]
+			} else {
+				// Slow path: the slot does not exist yet (or this is an
+				// ambient function). It may grow the namespace slice, so
+				// refresh the cached local.
+				g.sp = sp
+				g.envSetGlobal(fn, id, stack[sp-1])
+				envG = envGlobalsOf(fn)
+			}
 		case opDup:
 			stack[sp] = stack[sp-1]
 			sp++
@@ -678,6 +695,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 				code = fn.code
 				consts = fn.consts
 				upvals = fn.upvals
+				envG = envGlobalsOf(fn)
 				stack = g.stack
 				sp = g.sp
 				capCells = nil
@@ -790,6 +808,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					code = fn.code
 					consts = fn.consts
 					upvals = fn.upvals
+					envG = envGlobalsOf(fn)
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))
@@ -821,6 +840,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 				capSlots: pfn.capSlots, capBySlot: pfn.capBySlot,
 				capSrc: pfn.capSrc, capSymIDs: pfn.capSymIDs, capBySym: pfn.capBySym,
 				selfRef: pfn.selfRef, selfID: pfn.selfID,
+				env:    pfn.env,
 				upvals: make([]*FrameCell, ncap),
 			}
 			_ = pc // closure operands are embedded in the prototype (capSrc)
@@ -1006,6 +1026,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					code = fn.code
 					consts = fn.consts
 					upvals = fn.upvals
+					envG = envGlobalsOf(fn)
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))

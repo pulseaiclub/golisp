@@ -63,9 +63,9 @@ func (c *compiler) expand(x Value) Value {
 	case symDefineMac:
 		return x // handled by the compiler, which registers the macro
 	}
-	if g.symIsMacro(SymID(head)) {
+	if c.symIsMacro(SymID(head)) {
 		// expand macros with the raw arguments (macros see source syntax)
-		return c.expand(g.macroExpand(x))
+		return c.expand(c.macroExpand(x))
 	}
 	return c.expandList(x)
 }
