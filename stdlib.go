@@ -1,0 +1,112 @@
+package golisp
+
+import "fmt"
+
+// Lisp standard library loaded into every interpreter. Keeping this in Go
+// avoids a bootstrap file dependency while preserving femtolisp's familiar
+// surface language.
+
+const standardLibrary = `
+(define (> a b) (< b a))
+(define (<= a b) (not (< b a)))
+(define (>= a b) (not (< a b)))
+(define (1+ n) (+ n 1))
+(define (1- n) (- n 1))
+(define (zero? n) (= n 0))
+(define (negative? n) (< n 0))
+(define (positive? n) (> n 0))
+(define (even? n) (= (logand n 1) 0))
+(define (odd? n) (not (even? n)))
+(define (identity x) x)
+(define (mod0 x y) (- x (* (div0 x y) y)))
+
+(define (member x l)
+  (if (atom? l) #f (if (equal? x (car l)) l (member x (cdr l)))))
+(define (memv x l)
+  (if (atom? l) #f (if (eqv? x (car l)) l (memv x (cdr l)))))
+(define (assoc x l)
+  (if (atom? l) #f (if (equal? x (caar l)) (car l) (assoc x (cdr l)))))
+(define (assv x l)
+  (if (atom? l) #f (if (eqv? x (caar l)) (car l) (assv x (cdr l)))))
+
+(define (caar x) (car (car x)))
+(define (cadr x) (car (cdr x)))
+(define (cdar x) (cdr (car x)))
+(define (cddr x) (cdr (cdr x)))
+(define (caadr x) (car (car (cdr x))))
+(define (caddr x) (car (cdr (cdr x))))
+(define (cdadr x) (cdr (car (cdr x))))
+(define (cdddr x) (cdr (cdr (cdr x))))
+
+(define (append2 a b)
+  (if (null? a) b (cons (car a) (append2 (cdr a) b))))
+(define (append . lists)
+  (if (null? lists) ()
+      (if (null? (cdr lists)) (car lists)
+          (append2 (car lists) (apply append (cdr lists))))))
+(define (reverse-into x out)
+  (if (null? x) out (reverse-into (cdr x) (cons (car x) out))))
+(define (reverse x) (reverse-into x ()))
+(define (reverse! x) (reverse x))
+(define (list-head x n)
+  (if (or (<= n 0) (null? x)) () (cons (car x) (list-head (cdr x) (- n 1)))))
+(define (list-tail x n)
+  (if (or (<= n 0) (null? x)) x (list-tail (cdr x) (- n 1))))
+(define (filter p x)
+  (if (null? x) ()
+      (if (p (car x)) (cons (car x) (filter p (cdr x)))
+          (filter p (cdr x)))))
+(define (map f x)
+  (if (null? x) () (cons (f (car x)) (map f (cdr x)))))
+(define (for-each f x)
+  (if (null? x) () (begin (f (car x)) (for-each f (cdr x)))))
+(define (foldl f z x)
+  (if (null? x) z (foldl f (f z (car x)) (cdr x))))
+(define (foldr f z x)
+  (if (null? x) z (f (car x) (foldr f z (cdr x)))))
+(define (any p x)
+  (if (null? x) #f (if (p (car x)) #t (any p (cdr x)))))
+(define (every p x)
+  (if (null? x) #t (if (p (car x)) (every p (cdr x)) #f)))
+(define (length= x n) (= (length x) n))
+(define (length> x n) (> (length x) n))
+(define (list->vector x) (apply vector x))
+(define (map-int f n)
+  (if (<= n 0) () (cons (f (- n 1)) (map-int f (- n 1)))))
+
+; I/O helpers built on the stream primitives.
+
+(define (read-lines s)
+  (let ((line (read-line s)))
+    (if (eof-object? line) ()
+        (cons line (read-lines s)))))
+
+(define (file->string path) (read-file path))
+
+(define (string->file path text) (write-file path text))
+
+(define (with-file path mode thunk)
+  (let ((s (open path mode)))
+    (prog1 (thunk s) (close s))))
+
+(define (call-with-stream s thunk)
+  (prog1 (thunk s) (close s)))
+
+; Network helpers.
+
+(define (net.readLine s) (read-line s))
+(define (net.writeLine s . parts) (apply write-line s parts))
+`
+
+func (g *Interp) loadStandardLibrary() error {
+	forms, err := g.ReadAll(standardLibrary)
+	if err != nil {
+		return err
+	}
+	for _, f := range forms {
+		if _, err := g.EvalTop(f); err != nil {
+			return fmt.Errorf("standard library form %s: %w", WriteStringOf(f), err)
+		}
+	}
+	return nil
+}
