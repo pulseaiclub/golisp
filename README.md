@@ -1,7 +1,7 @@
 # golisp
 
 A bytecode-compiling Lisp interpreter and virtual machine written in Go. The
-dialect follows `../femtolisp`.
+dialect is based on the femtolisp project.
 
 ## Layout
 
@@ -254,7 +254,7 @@ visible; Lisp cannot import arbitrary Go packages.
 
 ## Performance
 
-The `perf.lsp` suite in `../femtolisp` is the reference workload, but there is
+The `perf.lsp` suite from the femtolisp project is the reference workload, but there is
 no checked-in Go benchmark harness yet, so no speedup claim is made here.
 Measured on an Apple M4 against `femtolisp` for three shared workloads, this
 implementation is roughly 2.3x to 3.1x slower.
