@@ -79,7 +79,9 @@ func (g *Interp) EvalStringContext(ctx context.Context, source string) (Value, e
 	var err error
 	result, err = g.withInvocation(ctx, func() (Value, error) {
 		result, err = g.withExecution(func() Value {
-			forms, readErr := g.ReadAll(source)
+			previousSource := g.source
+			defer func() { g.source = previousSource }()
+			forms, locations, readErr := g.readLocated(source, "<string>")
 			if readErr != nil {
 				panic(readErr)
 			}
@@ -87,7 +89,8 @@ func (g *Interp) EvalStringContext(ctx context.Context, source string) (Value, e
 				g.push(form)
 			}
 			result = Nil
-			for _, form := range forms {
+			for i, form := range forms {
+				g.source = locations[i]
 				g.checkContext()
 				result, err = g.EvalTop(form)
 				if err != nil {

@@ -210,6 +210,11 @@ It must be a positive integer; exceeding it fails immediately before copying
 the new task environment. Nested explicit scopes have independent limits.
 This is a task-count budget, not a memory quota or a worker-pool size.
 
+An optional `:copy-bytes N` option limits cumulative managed bytes copied for
+task snapshots and completion graphs; `0` means unlimited. It does not include
+worker execution allocations, Go metadata, or `wait` imports. Options precede
+the body and may not repeat. See [runtime semantics](runtime.md) for details.
+
 ### Loops
 
 ```lisp
@@ -233,6 +238,20 @@ This is a task-count budget, not a memory quota or a worker-pool size.
   (list 'if test (cons 'begin body) ()))
 ```
 
+### Guaranteed cleanup
+
+```lisp
+(unwind-protect
+  (use-resource resource)
+  (close resource))
+```
+
+The first expression supplies the result. Cleanup forms run once on normal
+return, errors, panic, and cooperative cancellation. Cleanup failure takes
+precedence over a protected failure. Cleanup runs without the original
+context cancellation or deadline; blocking cleanup can delay exit.
+`with-file` and `call-with-stream` guarantee closing through this mechanism.
+
 ### Miscellaneous
 
 ```lisp
@@ -241,7 +260,7 @@ This is a task-count budget, not a memory quota or a worker-pool size.
 (trycatch (lambda () body)       ; catches Lisp errors; body must be a
           (lambda (err) ...))    ; zero-argument thunk, err binds the error
 (time expr)                      ; macro: prints elapsed time, returns expr's value
-(eval form)                      ; evaluates a form at top level
+(eval form)                      ; evaluates in the active function/module namespace
 ```
 
 ---

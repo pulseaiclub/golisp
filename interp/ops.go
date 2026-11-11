@@ -16,6 +16,7 @@ type Function struct {
 	code      []uint8
 	consts    []Value
 	name      string
+	source    SourceLocation
 	nargs     int
 	nreq      int
 	variadic  bool

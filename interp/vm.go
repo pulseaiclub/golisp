@@ -89,6 +89,14 @@ func (g *Interp) call(fn *Function, base int, selfV Value) Value {
 // define slots become nil, and selfV fills the self-name slot. It leaves
 // g.sp at the top of the prepared frame.
 func (g *Interp) prepareFrame(fn *Function, base int, selfV Value) {
+	defer func() {
+		if r := recover(); r != nil {
+			if le, ok := r.(*LispError); ok {
+				r = traceError(le, TraceFrame{Function: fn.name, Source: fn.source})
+			}
+			panic(r)
+		}
+	}()
 	given := g.sp - base
 	want := fn.nargs
 	if fn.variadic {
@@ -138,6 +146,10 @@ func (g *Interp) setupTailFrameStack(fn2 *Function, base, argsBase, nargs int, s
 }
 
 func (g *Interp) execFrame(fn *Function, base int) (ret Value) {
+	previousEnv := g.activeEnv
+	g.activeEnv = fn.env
+	defer func() { g.activeEnv = previousEnv }()
+
 	rootTop := len(g.cellPool)
 	fnRoot := &FrameCell{v: g.box(boxFunction{fn})}
 	g.cellPool = append(g.cellPool, fnRoot)
@@ -197,6 +209,14 @@ func (g *Interp) popCells(to int) {
 
 // run executes fn at frame base with pre-initialized capCells.
 func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *FrameCell) Value {
+	defer func() {
+		if r := recover(); r != nil {
+			if le, ok := r.(*LispError); ok {
+				r = traceError(le, TraceFrame{Function: fn.name, Source: fn.source})
+			}
+			panic(r)
+		}
+	}()
 	stack := g.stack
 	code := fn.code
 	consts := fn.consts
@@ -489,7 +509,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			if !IsSymbol(v) {
 				stack[sp-1] = False
 			} else {
-				stack[sp-1] = BoolValue(envValue(env, g, SymID(v)) != 0)
+				_, ok := g.dynLookup(SymID(v))
+				stack[sp-1] = BoolValue(ok)
 			}
 		case opPairp:
 			stack[sp-1] = BoolValue(IsCons(stack[sp-1]))
@@ -679,6 +700,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 				consts = fn.consts
 				upvals = fn.upvals
 				env = fn.env
+				g.activeEnv = fn.env
 				stack = g.stack
 				sp = g.sp
 				capCells = nil
@@ -792,6 +814,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					consts = fn.consts
 					upvals = fn.upvals
 					env = fn.env
+					g.activeEnv = fn.env
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))
@@ -818,7 +841,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			}
 			nf := &Function{
 				code: pfn.code, consts: pfn.consts, name: pfn.name,
-				nargs: pfn.nargs, nreq: pfn.nreq, variadic: pfn.variadic,
+				source: pfn.source,
+				nargs:  pfn.nargs, nreq: pfn.nreq, variadic: pfn.variadic,
 				hasOpt: pfn.hasOpt, hasSelf: pfn.hasSelf, frameSize: pfn.frameSize,
 				capSlots: pfn.capSlots, capBySlot: pfn.capBySlot,
 				capSrc: pfn.capSrc, capSymIDs: pfn.capSymIDs, capBySym: pfn.capBySym,
@@ -1031,6 +1055,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					consts = fn.consts
 					upvals = fn.upvals
 					env = fn.env
+					g.activeEnv = fn.env
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))

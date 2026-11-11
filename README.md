@@ -157,9 +157,10 @@ ambient globals, and module fallback bindings. Calling the function after
 `wait` does not rebind its global names to the receiver. Functions returned in
 one result graph share their copied environment; their mutations stay local
 to that environment. Task globals are not merged into the receiver.
-Dynamic `eval` and indirect calls to dynamic namespace builtins still use the
-receiving interpreter's dynamic namespace; they do not evaluate in the
-retained lexical environment. Direct compiled variable reads/writes retain it.
+Dynamic `eval` and direct or indirect namespace builtin calls use the executing
+function's namespace too. They do not expose lexical frame slots. See
+[Runtime semantics and validation](doc/runtime.md) for cleanup, diagnostics,
+copy budgets and verification commands.
 
 ### Task scopes
 
@@ -198,6 +199,9 @@ error before copying the new task's environment; it does not wait for a free
 slot. This prevents a worker pool deadlock when tasks wait for descendants.
 Nested explicit scopes have their own limits and inherit cancellation. The
 limit bounds task count per scope, not bytes or total process concurrency.
+An optional `:copy-bytes` budget bounds cumulative managed bytes copied for
+snapshots and completion graphs; zero means unlimited. It excludes worker
+execution allocations, Go metadata, and `wait` result imports.
 Outside a scope, existing `par` behavior is unchanged and has no task limit.
 
 Cancellation is cooperative: scope cleanup waits for members to stop. A host

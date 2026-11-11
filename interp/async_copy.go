@@ -24,10 +24,11 @@ type asyncCopier struct {
 	tasks     map[*asyncTask]*asyncTask
 	source    *Interp // non-nil only when compacting a worker's result
 	ambient   *Module
+	budget    *taskScope // only snapshots and completion graphs charge the scope
 }
 
-func newAsyncCopier(dst *Interp, ctx context.Context) *asyncCopier {
-	return &asyncCopier{
+func newAsyncCopier(dst *Interp, ctx context.Context, budget ...*taskScope) *asyncCopier {
+	c := &asyncCopier{
 		dst: dst, ctx: ctx,
 		values:    make(map[Value]Value),
 		functions: make(map[*Function]*Function),
@@ -36,13 +37,17 @@ func newAsyncCopier(dst *Interp, ctx context.Context) *asyncCopier {
 		modules:   make(map[*Module]*Module),
 		tasks:     make(map[*asyncTask]*asyncTask),
 	}
+	if len(budget) > 0 {
+		c.budget = budget[0]
+	}
+	return c
 }
 
 // newAsyncResultCopier retains source globals only if the result graph reaches
 // a function needing them. Snapshot and wait import copies use newAsyncCopier:
 // ordinary nil environments must still resolve in the executing child.
-func newAsyncResultCopier(dst *Interp, ctx context.Context, source *Interp) *asyncCopier {
-	c := newAsyncCopier(dst, ctx)
+func newAsyncResultCopier(dst *Interp, ctx context.Context, source *Interp, budget ...*taskScope) *asyncCopier {
+	c := newAsyncCopier(dst, ctx, budget...)
 	c.source = source
 	return c
 }
@@ -99,7 +104,7 @@ func (g *Interp) snapshotAsync(ctx context.Context, thunk Value) (*Interp, Value
 		reader := *g.reader // strings.Reader's immutable string may be shared.
 		child.reader = &reader
 	}
-	c := newAsyncCopier(child, ctx)
+	c := newAsyncCopier(child, ctx, g.taskScope)
 	child.globals = c.valuesSlice(g.globals)
 	child.macros = c.valuesSlice(g.macros)
 	for path, m := range g.modules {
@@ -133,13 +138,32 @@ func (c *asyncCopier) value(v Value) Value {
 		return dst
 	}
 	g := c.dst
+	c.charge(v)
 	switch heapType(v) {
 	case tCons:
 		dst := g.Cons(Nil, Nil)
 		c.values[v] = dst
-		SetCar(dst, c.value(carFast(v)))
-		SetCdr(dst, c.value(cdrFast(v)))
-		return dst
+		root := dst
+		for {
+			SetCar(dst, c.value(carFast(v)))
+			v = cdrFast(v)
+			if !IsCons(v) {
+				SetCdr(dst, c.value(v))
+				return root
+			}
+			c.checkContext()
+			if tail, ok := c.values[v]; ok {
+				SetCdr(dst, tail)
+				return root
+			}
+			// Publish each tail shell before traversing its car. This keeps
+			// aliases and cycles intact without a Go frame per list element.
+			c.charge(v)
+			tail := g.Cons(Nil, Nil)
+			c.values[v] = tail
+			SetCdr(dst, tail)
+			dst = tail
+		}
 	case tVector:
 		src := vectorData(v)
 		dst := g.NewVector(len(src), Nil)
@@ -161,6 +185,14 @@ func (c *asyncCopier) value(v Value) Value {
 	default:
 		raise(symTypeError, "par/wait: cannot copy heap object of type %s", heapType(v))
 		return Nil
+	}
+}
+
+// Copied objects retain their cell layout, including headers and string padding.
+// Charging here keeps worker allocation independent of copying policy.
+func (c *asyncCopier) charge(v Value) {
+	if c.budget != nil {
+		c.budget.chargeCopy(int64(headerSize(heapHeader(v))) * 8)
 	}
 }
 

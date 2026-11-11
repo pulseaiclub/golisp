@@ -8,9 +8,10 @@ import (
 
 // LispError is raised via panic and caught by trycatch / top-level.
 type LispError struct {
-	kind uint32 // symbol id of error type
-	msg  string
-	args []Value
+	kind  uint32 // symbol id of error type
+	msg   string
+	args  []Value
+	trace []TraceFrame
 }
 
 func (e *LispError) Error() string { return e.msg }

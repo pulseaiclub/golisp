@@ -164,24 +164,22 @@ func TestAsyncClosureGCAndNamespaceGrowth(t *testing.T) {
 	}
 }
 
-// Only compiled global operations inherit the retained environment. Dynamic
-// eval and first-class bound? still use the receiving interpreter's dynamic
-// namespace, matching their existing builtin contract.
-func TestAsyncClosureDynamicScopeLimit(t *testing.T) {
+// Dynamic namespace operations agree with compiled references.
+func TestAsyncClosureDynamicNamespace(t *testing.T) {
 	g := NewInterp()
 	got := asyncEval(t, g, `
 		(: x 10)
 		(: f (wait (par (lambda () (eval 'x)))))
 		(set! x 20)
 		(f)`)
-	if got != FixnumValue(20) {
+	if got != FixnumValue(10) {
 		t.Fatalf("dynamic eval = %s", WriteStringOf(got))
 	}
 	got = asyncEval(t, g, `
 		(: f (wait (par (lambda () ((lambda (predicate) (predicate 'dynamic-only)) bound?)))))
 		(: dynamic-only 42)
 		(f)`)
-	if got != True {
+	if got != False {
 		t.Fatalf("first-class bound? = %s", WriteStringOf(got))
 	}
 }

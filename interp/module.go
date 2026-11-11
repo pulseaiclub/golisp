@@ -105,21 +105,38 @@ func (g *Interp) currentModule() *Module {
 	return nil
 }
 
-// dynLookup resolves id in the dynamic current namespace: the module being
-// loaded, else the ambient globals. Used by builtins such as bound? that
-// have no calling function to inherit a namespace from.
-func (g *Interp) dynLookup(id uint32) (Value, bool) {
+// dynamicModule returns the namespace used by dynamic operations. A module
+// being loaded owns the evaluation, while a running Lisp function supplies
+// the namespace for calls made from its body.
+func (g *Interp) dynamicModule() *Module {
 	if m := g.currentModule(); m != nil {
-		if v := m.get(id); v != 0 {
+		return m
+	}
+	return g.activeEnv
+}
+
+// evaluationModule returns the namespace used to compile an eval form. Module
+// loading takes precedence so an import started by a function still compiles
+// the imported module in its own namespace.
+func (g *Interp) evaluationModule() *Module {
+	return g.dynamicModule()
+}
+
+// dynLookup resolves id in the dynamic current namespace: the module being
+// loaded, the executing function's namespace, or the ambient globals.
+func (g *Interp) dynLookup(id uint32) (Value, bool) {
+	if m := g.dynamicModule(); m != nil {
+		if v := envValue(m, g, id); v != 0 {
 			return v, true
 		}
+		return 0, false
 	}
 	return g.symbolValue(id)
 }
 
 // dynSet binds id in the dynamic current namespace.
 func (g *Interp) dynSet(id uint32, v Value) {
-	if m := g.currentModule(); m != nil {
+	if m := g.dynamicModule(); m != nil {
 		m.setGlobal(id, v)
 		return
 	}
@@ -204,9 +221,14 @@ func (g *Interp) importModule(spec string) Value {
 	if err != nil {
 		raise(symIOError, "import: could not open %q", path)
 	}
-	forms, err := g.ReadAll(string(data))
+	previousSource, rootSP := g.source, g.sp
+	defer func() { g.source = previousSource; g.sp = rootSP }()
+	forms, locations, err := g.readLocated(string(data), path)
 	if err != nil {
-		raise(symParseError, "import %q: %s", spec, err.Error())
+		panic(&LispError{kind: symParseError, msg: fmt.Sprintf("import %q: %s", spec, err.Error()), trace: ErrorTrace(err)})
+	}
+	for _, f := range forms {
+		g.push(f)
 	}
 
 	m := &Module{
@@ -233,10 +255,11 @@ func (g *Interp) importModule(spec string) Value {
 			panic(r)
 		}
 	}()
-	for _, f := range forms {
+	for i, f := range forms {
+		g.source = locations[i]
 		if _, err := g.EvalTop(f); err != nil {
 			if le, ok := err.(*LispError); ok {
-				panic(&LispError{kind: le.kind,
+				panic(&LispError{kind: le.kind, trace: ErrorTrace(le),
 					msg: fmt.Sprintf("in module %s: %s", filepath.Base(path), le.msg)})
 			}
 			panic(err)

@@ -37,7 +37,9 @@ type Interp struct {
 	fileStack []string
 
 	// ctx is the context of the active host invocation.
-	ctx context.Context
+	ctx       context.Context
+	source    SourceLocation
+	activeEnv *Module
 
 	// Inherited by workers for structured task lifetime management.
 	taskScope *taskScope
@@ -169,6 +171,9 @@ func (g *Interp) EvalTop(x Value) (result Value, err error) {
 		g.popCells(cellTop)
 		if recovered != nil {
 			if le, ok := recovered.(*LispError); ok {
+				if len(le.trace) == 0 {
+					le = traceError(le, TraceFrame{Function: "eval", Source: g.source})
+				}
 				err = le
 				result = Nil
 			} else {
@@ -176,7 +181,7 @@ func (g *Interp) EvalTop(x Value) (result Value, err error) {
 			}
 		}
 	}()
-	c := &compiler{g: g, env: g.currentModule()}
+	c := &compiler{g: g, env: g.evaluationModule()}
 	fn := c.CompileTop(x)
 
 	fnValue := g.box(boxFunction{fn})
@@ -206,7 +211,9 @@ func (g *Interp) LoadFile(path string) error {
 	if err != nil {
 		return &LispError{kind: symIOError, msg: fmt.Sprintf("could not open %q", path)}
 	}
-	forms, err := g.ReadAll(string(data))
+	previousSource, rootSP := g.source, g.sp
+	defer func() { g.source = previousSource; g.sp = rootSP }()
+	forms, locations, err := g.readLocated(string(data), path)
 	if err != nil {
 		return err
 	}
@@ -214,6 +221,10 @@ func (g *Interp) LoadFile(path string) error {
 	g.fileStack = append(g.fileStack, path)
 	defer func() { g.fileStack = g.fileStack[:len(g.fileStack)-1] }()
 	for _, f := range forms {
+		g.push(f)
+	}
+	for i, f := range forms {
+		g.source = locations[i]
 		if _, err := g.EvalTop(f); err != nil {
 			return fmt.Errorf("in file %s: %w", path, err)
 		}

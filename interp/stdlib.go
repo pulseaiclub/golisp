@@ -13,11 +13,17 @@ import (
 var standardLibrary string
 
 func (g *Interp) loadStandardLibrary() error {
-	forms, err := g.ReadAll(standardLibrary)
+	previous, sp := g.source, g.sp
+	defer func() { g.source = previous; g.sp = sp }()
+	forms, locations, err := g.readLocated(standardLibrary, "stdlib.lsp")
 	if err != nil {
 		return err
 	}
 	for _, f := range forms {
+		g.push(f)
+	}
+	for i, f := range forms {
+		g.source = locations[i]
 		if _, err := g.EvalTop(f); err != nil {
 			return fmt.Errorf("standard library form %s: %w", WriteStringOf(f), err)
 		}

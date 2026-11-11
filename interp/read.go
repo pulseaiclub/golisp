@@ -13,6 +13,7 @@ type reader struct {
 	src string
 	pos int
 	g   *Interp
+	err error // first error encountered while skipping comments
 }
 
 func (g *Interp) ReadAll(src string) ([]Value, error) {
@@ -20,10 +21,16 @@ func (g *Interp) ReadAll(src string) ([]Value, error) {
 	var forms []Value
 	for {
 		r.skipWS()
+		if r.err != nil {
+			return forms, r.err
+		}
 		if r.pos >= len(r.src) {
 			return forms, nil
 		}
 		v, err := r.read()
+		if err == nil {
+			err = r.err
+		}
 		if err != nil {
 			return forms, err
 		}
@@ -38,7 +45,7 @@ func (g *Interp) Read(src string) (Value, error) {
 }
 
 func (r *reader) skipWS() {
-	for r.pos < len(r.src) {
+	for r.err == nil && r.pos < len(r.src) {
 		c := r.src[r.pos]
 		if c == ';' {
 			for r.pos < len(r.src) && r.src[r.pos] != '\n' {
@@ -61,13 +68,21 @@ func (r *reader) skipWS() {
 					r.pos++
 				}
 			}
+			if depth > 0 {
+				r.err = &LispError{kind: symParseError, msg: "unterminated block comment"}
+				return
+			}
 			continue
 		}
 		if c == '#' && r.pos+1 < len(r.src) && r.src[r.pos+1] == ';' {
 			// datum comment
 			r.pos += 2
-			r.skipWS()
-			r.read() // discard
+			if _, err := r.read(); err != nil {
+				if r.err == nil {
+					r.err = err
+				}
+				return
+			}
 			continue
 		}
 		if c <= ' ' {
@@ -95,6 +110,9 @@ func isSymChar(c byte) bool {
 
 func (r *reader) read() (Value, error) {
 	r.skipWS()
+	if r.err != nil {
+		return 0, r.err
+	}
 	if r.pos >= len(r.src) {
 		return EOFVal, &LispError{kind: symParseError, msg: "unexpected end of input"}
 	}
@@ -153,35 +171,37 @@ func (r *reader) readList(open byte) (Value, error) {
 	r.pos++
 	var head, tail Value
 	head = Nil
-	r.skipWS()
-	if r.peek() == close {
-		r.pos++
-		return Nil, nil
-	}
 	for {
 		r.skipWS()
+		if r.err != nil {
+			return 0, r.err
+		}
 		if r.pos >= len(r.src) {
 			return 0, &LispError{kind: symParseError, msg: "unterminated list"}
 		}
 		c := r.src[r.pos]
-		if c == close || (c == ')' || c == ']') {
+		if c == close {
 			r.pos++
 			return head, nil
 		}
 		// dotted pair?
 		if c == '.' && r.pos+1 < len(r.src) && !isSymChar(r.src[r.pos+1]) {
+			if head == Nil {
+				return 0, &LispError{kind: symParseError, msg: "unexpected ."}
+			}
 			r.pos++
 			d, err := r.read()
 			if err != nil {
 				return 0, err
 			}
 			r.skipWS()
-			if r.peek() == ')' || r.peek() == ']' {
-				r.pos++
+			if r.err != nil {
+				return 0, r.err
 			}
-			if head == Nil {
-				return d, nil
+			if r.peek() != close {
+				return 0, &LispError{kind: symParseError, msg: "expected closing delimiter after dotted pair"}
 			}
+			r.pos++
 			SetCdr(tail, d)
 			return head, nil
 		}
@@ -325,6 +345,9 @@ func (r *reader) readAtom() (Value, error) {
 		for r.pos < len(r.src) && r.src[r.pos] != '|' {
 			sb.WriteByte(r.src[r.pos])
 			r.pos++
+		}
+		if r.pos >= len(r.src) {
+			return 0, &LispError{kind: symParseError, msg: "unterminated symbol"}
 		}
 		r.pos++
 		return SymbolValue(internString(sb.String())), nil

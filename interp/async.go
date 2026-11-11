@@ -70,7 +70,7 @@ func (s *taskState) run(thunk Value) {
 		worker := s.child
 		defer runtime.KeepAlive(worker)
 		resultHeap := &Interp{heap: newHeap()}
-		result = newAsyncResultCopier(resultHeap, s.ctx, worker).value(result)
+		result = newAsyncResultCopier(resultHeap, s.ctx, worker, s.scope).value(result)
 		s.child = resultHeap
 	}
 	returned = true
@@ -122,6 +122,8 @@ func (g *Interp) waitAsyncTask(t *asyncTask) Value {
 		// The completed child never executes again. Nested workers use their
 		// own heaps, so they cannot mutate the graph being imported here.
 		defer runtime.KeepAlive(s)
+		// Wait imports are receiver-owned and excluded from the originating
+		// scope's budget; repeated waits reuse this handle's imported graph.
 		c := newAsyncCopier(g, ctx)
 		result := c.value(s.result)
 		t.result, t.imported = result, true

@@ -21,32 +21,33 @@ var (
 
 // Pre-interned symbols (order matters only for well-known ids).
 var (
-	symLambda      uint32
-	symQuote       uint32
-	symIf          uint32
-	symBegin       uint32
-	symSet         uint32
-	symDefine      uint32
-	symDefineMac   uint32
-	symLet         uint32
-	symLetStar     uint32
-	symLetRec      uint32
-	symCond        uint32
-	symAnd         uint32
-	symOr          uint32
-	symNot         uint32
-	symWhile       uint32
-	symDoTimes     uint32
-	symQuasiQuote  uint32
-	symUnquote     uint32
-	symUnquoteS    uint32
-	symLabel       uint32
-	symProg1       uint32
-	symTryCatch    uint32
-	symMacroExpand uint32
-	symPar         uint32
-	symBind        uint32
-	symTaskScope   uint32
+	symLambda        uint32
+	symQuote         uint32
+	symIf            uint32
+	symBegin         uint32
+	symSet           uint32
+	symDefine        uint32
+	symDefineMac     uint32
+	symLet           uint32
+	symLetStar       uint32
+	symLetRec        uint32
+	symCond          uint32
+	symAnd           uint32
+	symOr            uint32
+	symNot           uint32
+	symWhile         uint32
+	symDoTimes       uint32
+	symQuasiQuote    uint32
+	symUnquote       uint32
+	symUnquoteS      uint32
+	symLabel         uint32
+	symProg1         uint32
+	symTryCatch      uint32
+	symMacroExpand   uint32
+	symPar           uint32
+	symBind          uint32
+	symTaskScope     uint32
+	symUnwindProtect uint32
 
 	symTypeError    uint32
 	symArgError     uint32
@@ -77,6 +78,7 @@ func internWellKnown() {
 			{"label", &symLabel}, {"prog1", &symProg1}, {"trycatch", &symTryCatch},
 			{"*macroexpand*", &symMacroExpand}, {"par", &symPar}, {":", &symBind},
 			{"task-scope", &symTaskScope},
+			{"unwind-protect", &symUnwindProtect},
 			{"type-error", &symTypeError}, {"arg-error", &symArgError},
 			{"unbound-error", &symUnboundError}, {"bounds-error", &symBoundsError},
 			{"divide-error", &symDivideError}, {"io-error", &symIOError},

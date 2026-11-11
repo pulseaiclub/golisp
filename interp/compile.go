@@ -137,17 +137,25 @@ type compiler struct {
 // compiled: the module namespace first, then the ambient globals.
 
 func (c *compiler) symIsMacro(id uint32) bool {
-	if c.env != nil && c.env.getMacro(id) != 0 {
-		return true
+	for m := c.env; m != nil; m = m.fallback {
+		if m.getMacro(id) != 0 {
+			return true
+		}
+		if m.sealed {
+			return false
+		}
 	}
 	return c.g.symIsMacro(id)
 }
 
 func (c *compiler) macroExpand(x Value) Value {
-	if c.env != nil {
-		if mfn := c.env.getMacro(SymID(carFast(x))); mfn != 0 {
+	for m := c.env; m != nil; m = m.fallback {
+		if mfn := m.getMacro(SymID(carFast(x))); mfn != 0 {
 			args := listToSlice(cdrFast(x))
 			return c.g.applyValue(mfn, args)
+		}
+		if m.sealed {
+			raise(symUnboundError, "macro has no value")
 		}
 	}
 	return c.g.macroExpand(x)
@@ -162,12 +170,8 @@ func (c *compiler) registerMacro(id uint32, fn Value) {
 }
 
 func (c *compiler) symbolValue(id uint32) (Value, bool) {
-	if c.env != nil {
-		if v := c.env.get(id); v != 0 {
-			return v, true
-		}
-	}
-	return c.g.symbolValue(id)
+	v := envValue(c.env, c.g, id)
+	return v, v != 0
 }
 
 // env: stack of frames; each frame is list of symbol ids.
@@ -484,6 +488,7 @@ func (c *compiler) compileF(env [][]uint32, lambda Value) *Function {
 	e := newEmitter()
 	fn := &Function{
 		name:      "lambda",
+		source:    c.g.source,
 		nreq:      nreq,
 		nargs:     len(argSyms),
 		variadic:  variadic,
@@ -493,6 +498,10 @@ func (c *compiler) compileF(env [][]uint32, lambda Value) *Function {
 		selfID:    selfName,
 		frameSize: len(frame),
 		env:       c.env,
+	}
+
+	if hasSelf {
+		fn.name = symNameByID(selfName)
 	}
 
 	// fill capture metadata

@@ -3,6 +3,7 @@ package interp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -17,6 +18,12 @@ type taskScope struct {
 	active int
 	limit  int
 	err    error
+
+	// Cumulative managed-heap bytes copied by snapshots and completion graphs.
+	// Worker execution, Go allocations, arena slack and wait imports are excluded.
+	// Descendants inherit this counter; an explicit nested scope has its own.
+	copyLimit int64 // zero means unlimited
+	copyUsed  int64
 }
 
 func (s *taskScope) enter() {
@@ -41,6 +48,24 @@ func (s *taskScope) fail(err error) {
 	}
 }
 
+// chargeCopy reserves bytes before allocating an object's destination shell.
+// Failed and discarded copies are not refunded. A caught budget error still
+// cancels the scope, just like a failed worker.
+func (s *taskScope) chargeCopy(bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		panic(s.err)
+	}
+	if s.copyLimit > 0 && bytes > s.copyLimit-s.copyUsed {
+		err := &LispError{kind: symError, msg: fmt.Sprintf("task-scope: copy-bytes budget (%d) exceeded", s.copyLimit)}
+		s.err = err
+		s.cancel(err)
+		panic(err)
+	}
+	s.copyUsed += bytes
+}
+
 func (s *taskScope) leave() {
 	s.mu.Lock()
 	s.active--
@@ -55,15 +80,22 @@ func (s *taskScope) failure() error {
 }
 
 func bTaskScope(g *Interp, args []Value) (result Value) {
-	if len(args) != 2 || AsFunction(args[0]) == nil {
-		raise(symArgError, "task-scope: expected a body and a task limit")
+	if (len(args) != 2 && len(args) != 3) || AsFunction(args[0]) == nil {
+		raise(symArgError, "task-scope: expected a body, task limit and optional copy-bytes budget")
 	}
 	if !IsFixnum(args[1]) || Fixnum(args[1]) <= 0 {
 		raise(symArgError, "task-scope: limit must be a positive integer")
 	}
+	var copyLimit int64
+	if len(args) == 3 {
+		if !IsFixnum(args[2]) || Fixnum(args[2]) < 0 {
+			raise(symArgError, "task-scope: copy-bytes must be a nonnegative integer")
+		}
+		copyLimit = Fixnum(args[2])
+	}
 	parent := g.Context()
 	ctx, cancel := context.WithCancelCause(parent)
-	scope := &taskScope{cancel: cancel, limit: int(Fixnum(args[1]))}
+	scope := &taskScope{cancel: cancel, limit: int(Fixnum(args[1])), copyLimit: copyLimit}
 	previous := g.taskScope
 	g.taskScope = scope
 	returned := false

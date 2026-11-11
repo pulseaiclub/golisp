@@ -27,14 +27,42 @@ func (c *compiler) expand(x Value) Value {
 		thunk := c.expand(g.list3(SymbolValue(symLambda), Nil, carFast(args)))
 		spawn := g.box(boxBuiltin{&Builtin{name: "par", f: bPar, nargs: 1}})
 		return g.list2(spawn, thunk)
+	case symUnwindProtect:
+		args := cdrFast(x)
+		if !IsCons(args) {
+			raise(symArgError, "unwind-protect: expected a protected expression")
+		}
+		cleanup := cdrFast(args)
+		for p := cleanup; p != Nil; p = cdrFast(p) {
+			if !IsCons(p) {
+				raise(symArgError, "unwind-protect: expected a proper cleanup body")
+			}
+		}
+		bodyFn := c.expand(g.list3(SymbolValue(symLambda), Nil, carFast(args)))
+		cleanupFn := c.expand(g.cons3(SymbolValue(symLambda), Nil, cleanup))
+		protect := g.box(boxBuiltin{&Builtin{name: "unwind-protect", f: bUnwindProtect, nargs: 2}})
+		return g.list3(protect, bodyFn, cleanupFn)
 	case symTaskScope:
 		body := cdrFast(x)
 		limit := FixnumValue(defaultTaskLimit)
-		if IsCons(body) && carFast(body) == Symbol(":limit") {
+		copyBytes := FixnumValue(0)
+		seenLimit, seenBytes := false, false
+		for IsCons(body) && (carFast(body) == Symbol(":limit") || carFast(body) == Symbol(":copy-bytes")) {
+			option := carFast(body)
 			if !IsCons(cdrFast(body)) {
-				raise(symArgError, "task-scope: missing task limit")
+				raise(symArgError, "task-scope: missing option value")
 			}
-			limit = cadr(body)
+			if option == Symbol(":limit") {
+				if seenLimit {
+					raise(symArgError, "task-scope: duplicate :limit")
+				}
+				limit, seenLimit = cadr(body), true
+			} else {
+				if seenBytes {
+					raise(symArgError, "task-scope: duplicate :copy-bytes")
+				}
+				copyBytes, seenBytes = cadr(body), true
+			}
 			body = cddr(body)
 		}
 		for p := body; p != Nil; p = cdrFast(p) {
@@ -43,8 +71,8 @@ func (c *compiler) expand(x Value) Value {
 			}
 		}
 		thunk := c.expand(g.cons3(SymbolValue(symLambda), Nil, body))
-		scope := g.box(boxBuiltin{&Builtin{name: "task-scope", f: bTaskScope, nargs: 2}})
-		return g.list3(scope, thunk, c.expand(limit))
+		scope := g.box(boxBuiltin{&Builtin{name: "task-scope", f: bTaskScope, nargs: 3}})
+		return g.list4(scope, thunk, c.expand(limit), c.expand(copyBytes))
 	case symBind:
 		args := cdrFast(x)
 		if !IsCons(args) || !IsSymbol(carFast(args)) ||

@@ -33,7 +33,7 @@ func main() {
 
 	if len(os.Args) > 1 {
 		if err := g.LoadFile(os.Args[1]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, interp.FormatError(err))
 			os.Exit(1)
 		}
 		return
@@ -49,7 +49,7 @@ func main() {
 (princ (str.ToLower "LOUD") "\n")
 `
 	if _, err := g.EvalString(script); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, interp.FormatError(err))
 		os.Exit(1)
 	}
 }

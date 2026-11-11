@@ -603,15 +603,18 @@ func bWait(g *Interp, args []Value) Value {
 }
 
 func bEval(g *Interp, args []Value) Value {
+	previous := g.source
+	g.source = SourceLocation{File: "<eval>"}
+	defer func() { g.source = previous }()
 	v, err := g.EvalTop(args[0])
 	if err != nil {
-		raise(symError, "%s", err.Error())
+		panic(&LispError{kind: symError, msg: err.Error(), trace: ErrorTrace(err)})
 	}
 	return v
 }
 func bLoad(g *Interp, args []Value) Value {
 	if err := g.LoadFile(GoString(args[0])); err != nil {
-		raise(symIOError, "%s", err.Error())
+		panic(&LispError{kind: symIOError, msg: err.Error(), trace: ErrorTrace(err)})
 	}
 	return True
 }

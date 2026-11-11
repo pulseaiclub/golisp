@@ -79,10 +79,10 @@
 
 (define (with-file path mode thunk)
   (let ((s (open path mode)))
-    (prog1 (thunk s) (close s))))
+    (unwind-protect (thunk s) (close s))))
 
 (define (call-with-stream s thunk)
-  (prog1 (thunk s) (close s)))
+  (unwind-protect (thunk s) (close s)))
 
 ; Network helpers.
 
