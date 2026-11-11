@@ -227,6 +227,13 @@ type fvVar int
 // compileF compiles (lambda args body... . name) in env.
 // Returns the prototype and the list of (level,slot) captures it needs.
 func (c *compiler) compileF(env [][]uint32, lambda Value) *Function {
+	// Only the outer evaluation thunk defines globals. Nested lambdas,
+	// including task-scope bodies, define their own frame slots.
+	wasTopLevel := c.atTopLevel
+	if len(env) != 0 {
+		c.atTopLevel = false
+	}
+	defer func() { c.atTopLevel = wasTopLevel }()
 	args := cadr(lambda)
 	body := cddr(lambda)
 	// A function name is encoded as the improper tail of the lambda body.

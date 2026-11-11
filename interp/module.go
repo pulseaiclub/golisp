@@ -25,6 +25,11 @@ type Module struct {
 
 	globals []Value // module-private bindings by symbol id
 	macros  []Value // module-private macros by symbol id
+
+	// Returned async closures use an explicit ambient fallback. A sealed
+	// namespace ends lookup even for absent bindings; it never sees the receiver.
+	fallback *Module
+	sealed   bool
 }
 
 // growFor ensures the module arrays can hold id.
@@ -71,6 +76,7 @@ func (g *Interp) markModule(m *Module) {
 		return
 	}
 	g.gcModules[m] = true
+	g.markModule(m.fallback)
 	for _, v := range m.globals {
 		g.mark(v)
 	}
@@ -80,16 +86,6 @@ func (g *Interp) markModule(m *Module) {
 	if m.exportsV != 0 {
 		g.mark(m.exportsV)
 	}
-}
-
-// envGlobalsOf returns the namespace a function's global references resolve
-// against: the module namespace for module functions, nil (the interpreter's
-// ambient globals) otherwise.
-func envGlobalsOf(fn *Function) []Value {
-	if fn.env == nil {
-		return nil
-	}
-	return fn.env.globals
 }
 
 // envSetGlobal implements opSetG for the calling function's namespace.
@@ -130,12 +126,16 @@ func (g *Interp) dynSet(id uint32, v Value) {
 	g.setGlobal(id, v)
 }
 
-// envValue reads a global binding from a namespace slice, falling back to
-// the ambient globals. Returns 0 when unbound.
-func envValue(envG []Value, g *Interp, id uint32) Value {
-	if envG != nil && int(id) < len(envG) {
-		if v := envG[id]; v != 0 {
+// envValue reads through the live namespace pointers, so a nested call can
+// grow a namespace without leaving its caller with a stale globals slice.
+// Ordinary modules fall back to g; retained task namespaces end at sealed.
+func envValue(env *Module, g *Interp, id uint32) Value {
+	for m := env; m != nil; m = m.fallback {
+		if v := m.get(id); v != 0 {
 			return v
+		}
+		if m.sealed {
+			return 0
 		}
 	}
 	if int(id) < len(g.globals) {

@@ -39,6 +39,9 @@ type Interp struct {
 	// ctx is the context of the active host invocation.
 	ctx context.Context
 
+	// Inherited by workers for structured task lifetime management.
+	taskScope *taskScope
+
 	// Per-collection cycle guard for namespaces reached through closures.
 	gcModules map[*Module]bool
 }

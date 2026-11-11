@@ -28,6 +28,7 @@ type taskState struct {
 	once   sync.Once
 	result Value
 	err    error
+	scope  *taskScope
 }
 
 func (s *taskState) finish(result Value, err error) {
@@ -53,7 +54,13 @@ func (s *taskState) run(thunk Value) {
 		if err != nil {
 			s.child = nil
 		}
+		if s.scope != nil {
+			s.scope.fail(err)
+		}
 		s.finish(result, err)
+		if s.scope != nil {
+			s.scope.leave()
+		}
 	}()
 	result, err = s.child.CallContext(s.ctx, thunk)
 	if err == nil {
@@ -63,7 +70,7 @@ func (s *taskState) run(thunk Value) {
 		worker := s.child
 		defer runtime.KeepAlive(worker)
 		resultHeap := &Interp{heap: newHeap()}
-		result = newAsyncCopier(resultHeap, s.ctx).value(result)
+		result = newAsyncResultCopier(resultHeap, s.ctx, worker).value(result)
 		s.child = resultHeap
 	}
 	returned = true
@@ -71,12 +78,24 @@ func (s *taskState) run(thunk Value) {
 
 func (g *Interp) newAsyncTask(thunk Value) Value {
 	ctx := g.Context()
+	scope := g.taskScope
+	if scope != nil {
+		scope.enter()
+	}
+	launched := false
+	defer func() {
+		if scope != nil && !launched {
+			scope.leave()
+		}
+	}()
 	child, copiedThunk := g.snapshotAsync(ctx, thunk)
-	s := &taskState{done: make(chan struct{}), ctx: ctx, child: child}
+	child.taskScope = scope
+	s := &taskState{done: make(chan struct{}), ctx: ctx, child: child, scope: scope}
 	t := &asyncTask{owner: g, state: s}
 	v := g.box(boxAsyncTask{t: t})
 	// Only the isolated child and its thunk are reachable from this worker.
 	go s.run(copiedThunk)
+	launched = true
 	return v
 }
 

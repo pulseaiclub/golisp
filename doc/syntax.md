@@ -181,6 +181,35 @@ Go callback state, files, and network resources are external shared state and
 require appropriate host synchronization. See [parallel tasks](../README.md#parallel-tasks)
 for cancellation, ownership, and scheduling costs.
 
+### Task lifetime scopes
+
+```lisp
+(task-scope
+  (: a (par (work 20)))
+  (: b (par (work 22)))
+  (+ (wait a) (wait b)))
+
+(task-scope :limit 32
+  (par (work 20))
+  42)                            ; joins children, returns 42
+```
+
+`task-scope` evaluates its body in a local function scope and waits for all
+member tasks and their descendants before returning the body's last value.
+An empty body returns `()`. Existing tasks passed in remain owned by their
+original scope. Tasks created outside any scope keep their existing lifetime.
+
+Any member error cancels the group and is propagated at scope exit, including
+errors from tasks that nobody explicitly waited on. Catch errors around the
+whole scope: catching a member's error inside the scope does not undo its
+failure. Body failure also requests cancellation and waits for cleanup.
+Blocking host calls must cooperate with cancellation for cleanup to finish.
+
+`:limit` sets the maximum number of active member tasks (default 1024).
+It must be a positive integer; exceeding it fails immediately before copying
+the new task environment. Nested explicit scopes have independent limits.
+This is a task-count budget, not a memory quota or a worker-pool size.
+
 ### Loops
 
 ```lisp

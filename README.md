@@ -152,15 +152,63 @@ are not visible to an existing task. Cycles and aliases within a copied object
 graph are preserved. Snapshot creation has a cost proportional to reachable
 state: use `par` for substantial work, not individual arithmetic operations.
 
-Returned functions keep copied lexical captures and module namespaces. Their
-ambient global references resolve in the receiving interpreter, as do module
-fallback references; task globals are not merged back. Capture a value in a
-`let` when a returned function must retain a task-local value.
+Returned functions retain their task environment, including lexical captures,
+ambient globals, and module fallback bindings. Calling the function after
+`wait` does not rebind its global names to the receiver. Functions returned in
+one result graph share their copied environment; their mutations stay local
+to that environment. Task globals are not merged into the receiver.
+Dynamic `eval` and indirect calls to dynamic namespace builtins still use the
+receiving interpreter's dynamic namespace; they do not evaluate in the
+retained lexical environment. Direct compiled variable reads/writes retain it.
+
+### Task scopes
+
+Use an explicit scope when work must finish before execution leaves a block:
+
+```lisp
+(task-scope
+  (: a (par (work 20)))
+  (: b (par (work 22)))
+  (+ (wait a) (wait b)))
+
+(task-scope :limit 32
+  (par (work 20))
+  42)                         ; waits for work, then returns 42
+```
+
+A scope creates a local function scope and returns its last expression's value
+(`()` for an empty body). Put local definitions at the beginning of the body,
+or use `let`. It joins all tasks it creates and their descendants, including
+unwaited tasks. Completed task handles can be returned and waited on later.
+Tasks created outside the scope do not become its members merely by waiting on
+or copying their handles.
+
+Any member failure cancels the group immediately. Scope exit joins the group
+and propagates the error; catching a `wait` error inside the scope does not
+make the group successful again. Catch around `task-scope` for recovery.
+A body failure also cancels and joins members. A body error takes precedence,
+except that cancellation caused by a failed task reports the original task
+error. Concurrent failures report the first recorded task error.
+
+The default limit is 1024 active member tasks, including descendants that
+inherit the same scope. An explicit nested scope establishes a new budget.
+`:limit` accepts a positive integer expression evaluated once on entry.
+Exceeding the limit raises an
+error before copying the new task's environment; it does not wait for a free
+slot. This prevents a worker pool deadlock when tasks wait for descendants.
+Nested explicit scopes have their own limits and inherit cancellation. The
+limit bounds task count per scope, not bytes or total process concurrency.
+Outside a scope, existing `par` behavior is unchanged and has no task limit.
+
+Cancellation is cooperative: scope cleanup waits for members to stop. A host
+callback or blocking I/O operation that ignores cancellation can delay scope
+exit indefinitely. A scope does not close externally shared resources.
 
 Tasks inherit the context of the invocation that creates them. Cancelling that
 context stops VM execution cooperatively. A cancelled waiting invocation can
 stop waiting; blocking host operations must themselves support cancellation.
-Unwaited tasks run until completion or context cancellation. The CLI does not
+Outside a scope, unwaited tasks run until completion or context cancellation.
+The CLI does not
 implicitly join tasks on exit: explicitly `wait` for work that must finish.
 
 Go functions and registered Go objects remain shared host capabilities. Host

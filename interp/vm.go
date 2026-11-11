@@ -207,7 +207,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 	}
 	sp := base + frameSize
 	upvals := fn.upvals
-	envG := envGlobalsOf(fn) // module namespace, or nil for ambient globals
+	env := fn.env // retain the namespace pointer, not its growable globals slice
 
 	for {
 		g.checkContext()
@@ -240,15 +240,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 		case opLoadG:
 			id := decU32(code, pc)
 			pc += 4
-			// Module functions resolve their own namespace first, then fall
-			// back to the ambient globals (like globalThis in JS).
-			var v Value
-			if envG != nil && int(id) < len(envG) {
-				v = envG[id]
-			}
-			if v == 0 && int(id) < len(g.globals) {
-				v = g.globals[id]
-			}
+			v := envValue(env, g, id)
 			if v == 0 {
 				g.sp = sp
 				raise(symUnboundError, "variable %s has no value", symNameByID(id))
@@ -307,16 +299,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 		case opSetG:
 			id := decU32(code, pc)
 			pc += 4
-			if envG != nil && int(id) < len(envG) {
-				envG[id] = stack[sp-1]
-			} else {
-				// Slow path: the slot does not exist yet (or this is an
-				// ambient function). It may grow the namespace slice, so
-				// refresh the cached local.
-				g.sp = sp
-				g.envSetGlobal(fn, id, stack[sp-1])
-				envG = envGlobalsOf(fn)
-			}
+			g.sp = sp
+			g.envSetGlobal(fn, id, stack[sp-1])
 		case opDup:
 			stack[sp] = stack[sp-1]
 			sp++
@@ -505,8 +489,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			if !IsSymbol(v) {
 				stack[sp-1] = False
 			} else {
-				_, bound := g.dynLookup(SymID(v))
-				stack[sp-1] = BoolValue(bound)
+				stack[sp-1] = BoolValue(envValue(env, g, SymID(v)) != 0)
 			}
 		case opPairp:
 			stack[sp-1] = BoolValue(IsCons(stack[sp-1]))
@@ -695,7 +678,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 				code = fn.code
 				consts = fn.consts
 				upvals = fn.upvals
-				envG = envGlobalsOf(fn)
+				env = fn.env
 				stack = g.stack
 				sp = g.sp
 				capCells = nil
@@ -808,7 +791,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					code = fn.code
 					consts = fn.consts
 					upvals = fn.upvals
-					envG = envGlobalsOf(fn)
+					env = fn.env
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))
@@ -889,8 +872,8 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			g.sp = sp
 			// Resolve both names in the calling function's namespace so
 			// module code sees module bindings (see goMemberResolve).
-			pv := envValue(envG, g, prefixID)
-			fv := envValue(envG, g, fullID)
+			pv := envValue(env, g, prefixID)
+			fv := envValue(env, g, fullID)
 			v := g.goMemberResolve(pv, SymbolValue(fullID),
 				GoString(member), fv, callable)
 			stack = g.stack
@@ -904,7 +887,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			member := consts[uint16(code[pc+4])|uint16(code[pc+5])<<8]
 			pc += 6
 			g.sp = sp
-			pv := envValue(envG, g, prefixID)
+			pv := envValue(env, g, prefixID)
 			if pv != 0 && IsBoxed(pv) {
 				if _, _, ok := AsGoValue(pv); ok {
 					goMemberSet(g, pv, GoString(member), stack[sp-1])
@@ -923,12 +906,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 			// function's namespace.
 			fullName := SymName(SymbolValue(prefixID)) + "." + GoString(member)
 			fullID := internString(fullName)
-			if envG != nil && int(fullID) < len(envG) {
-				envG[fullID] = stack[sp-1]
-			} else {
-				g.envSetGlobal(fn, fullID, stack[sp-1])
-				envG = envGlobalsOf(fn)
-			}
+			g.envSetGlobal(fn, fullID, stack[sp-1])
 			stack = g.stack
 			sp = g.sp
 
@@ -1052,7 +1030,7 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 					code = fn.code
 					consts = fn.consts
 					upvals = fn.upvals
-					envG = envGlobalsOf(fn)
+					env = fn.env
 					capCells = nil
 					if len(fn.capSlots) > 0 {
 						capCells = g.allocCells(len(fn.capSlots))

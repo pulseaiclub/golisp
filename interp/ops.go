@@ -30,7 +30,7 @@ type Function struct {
 	upvals    []*FrameCell
 	selfRef   bool // this function is recursively callable through its self slot
 	selfID    uint32
-	env       *Module // module namespace for global refs (nil = ambient globals)
+	env       *Module // module or retained task namespace (nil = ambient globals)
 }
 
 // Builtin is a Go-implemented primitive.

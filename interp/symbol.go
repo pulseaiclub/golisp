@@ -46,6 +46,7 @@ var (
 	symMacroExpand uint32
 	symPar         uint32
 	symBind        uint32
+	symTaskScope   uint32
 
 	symTypeError    uint32
 	symArgError     uint32
@@ -75,6 +76,7 @@ func internWellKnown() {
 			{"unquote", &symUnquote}, {"unquote-splicing", &symUnquoteS},
 			{"label", &symLabel}, {"prog1", &symProg1}, {"trycatch", &symTryCatch},
 			{"*macroexpand*", &symMacroExpand}, {"par", &symPar}, {":", &symBind},
+			{"task-scope", &symTaskScope},
 			{"type-error", &symTypeError}, {"arg-error", &symArgError},
 			{"unbound-error", &symUnboundError}, {"bounds-error", &symBoundsError},
 			{"divide-error", &symDivideError}, {"io-error", &symIOError},

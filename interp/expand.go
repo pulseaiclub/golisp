@@ -27,6 +27,24 @@ func (c *compiler) expand(x Value) Value {
 		thunk := c.expand(g.list3(SymbolValue(symLambda), Nil, carFast(args)))
 		spawn := g.box(boxBuiltin{&Builtin{name: "par", f: bPar, nargs: 1}})
 		return g.list2(spawn, thunk)
+	case symTaskScope:
+		body := cdrFast(x)
+		limit := FixnumValue(defaultTaskLimit)
+		if IsCons(body) && carFast(body) == Symbol(":limit") {
+			if !IsCons(cdrFast(body)) {
+				raise(symArgError, "task-scope: missing task limit")
+			}
+			limit = cadr(body)
+			body = cddr(body)
+		}
+		for p := body; p != Nil; p = cdrFast(p) {
+			if !IsCons(p) {
+				raise(symArgError, "task-scope: expected a proper body")
+			}
+		}
+		thunk := c.expand(g.cons3(SymbolValue(symLambda), Nil, body))
+		scope := g.box(boxBuiltin{&Builtin{name: "task-scope", f: bTaskScope, nargs: 2}})
+		return g.list3(scope, thunk, c.expand(limit))
 	case symBind:
 		args := cdrFast(x)
 		if !IsCons(args) || !IsSymbol(carFast(args)) ||

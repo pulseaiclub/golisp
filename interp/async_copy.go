@@ -22,6 +22,8 @@ type asyncCopier struct {
 	tables    map[*Table]*Table
 	modules   map[*Module]*Module
 	tasks     map[*asyncTask]*asyncTask
+	source    *Interp // non-nil only when compacting a worker's result
+	ambient   *Module
 }
 
 func newAsyncCopier(dst *Interp, ctx context.Context) *asyncCopier {
@@ -34,6 +36,25 @@ func newAsyncCopier(dst *Interp, ctx context.Context) *asyncCopier {
 		modules:   make(map[*Module]*Module),
 		tasks:     make(map[*asyncTask]*asyncTask),
 	}
+}
+
+// newAsyncResultCopier retains source globals only if the result graph reaches
+// a function needing them. Snapshot and wait import copies use newAsyncCopier:
+// ordinary nil environments must still resolve in the executing child.
+func newAsyncResultCopier(dst *Interp, ctx context.Context, source *Interp) *asyncCopier {
+	c := newAsyncCopier(dst, ctx)
+	c.source = source
+	return c
+}
+
+func (c *asyncCopier) ambientModule() *Module {
+	if c.ambient == nil {
+		// Publish before copying: globals can contain functions pointing back
+		// to this namespace, including the function currently being copied.
+		c.ambient = &Module{sealed: true}
+		c.ambient.globals = c.valuesSlice(c.source.globals)
+	}
+	return c.ambient
 }
 
 func (c *asyncCopier) checkContext() {
@@ -177,12 +198,10 @@ func (c *asyncCopier) function(src *Function) *Function {
 	for i, up := range src.upvals {
 		dst.upvals[i] = c.cell(up)
 	}
-	// A nil environment keeps the language's ambient-global semantics: when
-	// a returned closure is imported by wait, its free global names resolve
-	// in the receiving interpreter. Captured cells and explicit module
-	// namespaces are copied, not rebound. Module fallback globals likewise
-	// belong to the receiver. No task globals are merged into the receiver.
 	dst.env = c.module(src.env)
+	if src.env == nil && c.source != nil {
+		dst.env = c.ambientModule()
+	}
 	return dst
 }
 
@@ -233,8 +252,12 @@ func (c *asyncCopier) module(src *Module) *Module {
 	if dst, ok := c.modules[src]; ok {
 		return dst
 	}
-	dst := &Module{Path: src.Path, Dir: src.Dir, loading: src.loading}
+	dst := &Module{Path: src.Path, Dir: src.Dir, loading: src.loading, sealed: src.sealed}
 	c.modules[src] = dst
+	dst.fallback = c.module(src.fallback)
+	if src.fallback == nil && !src.sealed && c.source != nil {
+		dst.fallback = c.ambientModule()
+	}
 	dst.globals = c.valuesSlice(src.globals)
 	dst.macros = c.valuesSlice(src.macros)
 	dst.Exports = c.table(src.Exports)
