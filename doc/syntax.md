@@ -150,6 +150,37 @@ Any other escaped character stands for itself.
 (label f (lambda (x) ...))       ; self-referencing binding; f may recurse
 ```
 
+### Parallel expressions
+
+```lisp
+(: x (par (long-computation)))   ; : is an alias for define
+(: y x)                         ; share a task handle, no waiting
+(do-other-things)
+(foo (wait y))                  ; wait only where the result is required
+
+(let ((n 40)) (wait (par (+ n 2))))  ; => 42, lexical capture
+(wait (par (wait (par 42))))         ; => 42, nested tasks
+```
+
+`par` is a special form taking exactly one unevaluated expression. Use
+`(par (begin e1 e2 ...))` for a block. It schedules the expression immediately
+after copying the current Lisp environment into an independent VM. It returns
+an opaque task handle; binding, storing, printing, or passing that handle does
+not wait. `(: name value)` follows the existing `define` scope rules.
+
+`wait` is a function taking exactly one task. It blocks until completion and
+returns the result or propagates the task's error. Repeated waits on the same
+handle return the cached value. Task results may themselves be task handles;
+each `wait` unwraps only one level. Ordinary values passed to `wait` raise a
+type error. A task used where a number is required does not auto-convert.
+
+Lisp bindings and mutable objects use snapshot isolation: changes inside a
+task do not modify the parent's state, and definitions made after `par` are not
+visible to that task. Combine results through `wait`. Registered Go objects,
+Go callback state, files, and network resources are external shared state and
+require appropriate host synchronization. See [parallel tasks](../README.md#parallel-tasks)
+for cancellation, ownership, and scheduling costs.
+
 ### Loops
 
 ```lisp

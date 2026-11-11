@@ -38,6 +38,9 @@ type Interp struct {
 
 	// ctx is the context of the active host invocation.
 	ctx context.Context
+
+	// Per-collection cycle guard for namespaces reached through closures.
+	gcModules map[*Module]bool
 }
 
 type tryFrame struct {
@@ -138,7 +141,7 @@ func (g *Interp) builtinOf(id uint32) *Builtin {
 
 // Eval compiles expr and runs it.
 func (g *Interp) Eval(x Value) (Value, error) {
-	return g.EvalTop(x)
+	return g.EvalContext(g.Context(), x)
 }
 
 func (g *Interp) EvalString(src string) (Value, error) {

@@ -65,14 +65,15 @@ type Boxed struct {
 }
 
 type (
-	boxFunction struct{ fn *Function }
-	boxBuiltin  struct{ b *Builtin }
-	boxTable    struct{ t *Table }
-	boxStream   struct{ s *IOStream }
-	boxGensym   struct{ id uint32 }
-	boxCell     struct{ c *FrameCell }
-	boxListener struct{ l *Listener }
-	boxGoFunc   struct {
+	boxFunction  struct{ fn *Function }
+	boxBuiltin   struct{ b *Builtin }
+	boxTable     struct{ t *Table }
+	boxStream    struct{ s *IOStream }
+	boxGensym    struct{ id uint32 }
+	boxCell      struct{ c *FrameCell }
+	boxAsyncTask struct{ t *asyncTask }
+	boxListener  struct{ l *Listener }
+	boxGoFunc    struct {
 		v    reflect.Value
 		name string
 	}
@@ -397,6 +398,15 @@ func AsStream(v Value) *IOStream {
 	return nil
 }
 
+func AsAsyncTask(v Value) *asyncTask {
+	if IsBoxed(v) {
+		if t, ok := boxOf(v).data.(boxAsyncTask); ok {
+			return t.t
+		}
+	}
+	return nil
+}
+
 // --- GC ---
 
 func (g *Interp) maybeGC() {
@@ -407,6 +417,8 @@ func (g *Interp) maybeGC() {
 
 func (g *Interp) gc() {
 	h := g.heap
+	g.gcModules = make(map[*Module]bool)
+	defer func() { g.gcModules = nil }()
 	// mark roots
 	for _, v := range g.globals {
 		g.mark(v)
@@ -505,6 +517,7 @@ func (g *Interp) mark(v Value) {
 			switch d := b.data.(type) {
 			case boxFunction:
 				fn := d.fn
+				g.markModule(fn.env)
 				for _, c := range fn.consts {
 					g.mark(c)
 				}
@@ -520,6 +533,8 @@ func (g *Interp) mark(v Value) {
 				if d.c != nil {
 					g.mark(d.c.v)
 				}
+			case boxAsyncTask:
+				d.t.mark(g)
 			case boxStream, boxListener, boxGensym, boxGoFunc, boxGoValue:
 				// These hold no Lisp values, so the Go runtime keeps
 				// whatever they reference alive.

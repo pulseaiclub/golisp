@@ -17,6 +17,23 @@ func (c *compiler) expand(x Value) Value {
 	switch SymID(head) {
 	case symQuote:
 		return x
+	case symPar:
+		args := cdrFast(x)
+		if !IsCons(args) || cdrFast(args) != Nil {
+			raise(symArgError, "par: expected one expression")
+		}
+		// Introduce the lambda before capture analysis, so lexical variables
+		// referenced only inside par are captured correctly.
+		thunk := c.expand(g.list3(SymbolValue(symLambda), Nil, carFast(args)))
+		spawn := g.box(boxBuiltin{&Builtin{name: "par", f: bPar, nargs: 1}})
+		return g.list2(spawn, thunk)
+	case symBind:
+		args := cdrFast(x)
+		if !IsCons(args) || !IsSymbol(carFast(args)) ||
+			!IsCons(cdrFast(args)) || cddr(args) != Nil {
+			raise(symArgError, ": expected a symbol and a value")
+		}
+		return c.expand(g.Cons(SymbolValue(symDefine), args))
 	case symLambda:
 		// (lambda args body...) — expand body, keep the self-name tail
 		args := cadr(x)

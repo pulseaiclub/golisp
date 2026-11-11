@@ -4,6 +4,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Listener wraps a net.Listener as a boxed value so Lisp can accept
@@ -11,14 +12,13 @@ import (
 type Listener struct {
 	ln     net.Listener
 	name   string
-	closed bool
+	closed atomic.Bool
 }
 
 func (l *Listener) close() error {
-	if l.closed {
+	if l.closed.Swap(true) {
 		return nil
 	}
-	l.closed = true
 	return l.ln.Close()
 }
 
@@ -84,9 +84,11 @@ func bTCPAccept(g *Interp, args []Value) Value {
 	if l == nil {
 		raise(symTypeError, "tcp-accept: expected listener")
 	}
-	if l.closed {
+	if l.closed.Load() {
 		raise(symIOError, "tcp-accept: listener is closed")
 	}
+	// net.Listener supports concurrent calls; do not lock across Accept,
+	// since Close must be able to interrupt it.
 	conn, err := l.ln.Accept()
 	if err != nil {
 		raise(symIOError, "tcp-accept: %s", err)

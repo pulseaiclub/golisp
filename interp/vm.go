@@ -848,9 +848,9 @@ func (g *Interp) run(fn *Function, base int, capCells []*FrameCell, fnRoot *Fram
 				src := pfn.capSrc[i]
 				lev := int(src >> 16)
 				slot := int(src & 0xffff)
-				if lev <= 1 {
-					// lev 1: parent frame's cell; lev 0 is retained for
-					// compatibility with older prototypes.
+				if lev == 0 {
+					// lev 0 names a slot in the parent frame. Higher levels
+					// name a value already captured by the parent.
 					if capCells == nil {
 						nf.upvals[i] = &FrameCell{v: stack[base+slot]}
 						g.cellPool = append(g.cellPool, nf.upvals[i])

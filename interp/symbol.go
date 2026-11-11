@@ -44,6 +44,8 @@ var (
 	symProg1       uint32
 	symTryCatch    uint32
 	symMacroExpand uint32
+	symPar         uint32
+	symBind        uint32
 
 	symTypeError    uint32
 	symArgError     uint32
@@ -72,7 +74,7 @@ func internWellKnown() {
 			{"dotimes", &symDoTimes}, {"quasiquote", &symQuasiQuote},
 			{"unquote", &symUnquote}, {"unquote-splicing", &symUnquoteS},
 			{"label", &symLabel}, {"prog1", &symProg1}, {"trycatch", &symTryCatch},
-			{"*macroexpand*", &symMacroExpand},
+			{"*macroexpand*", &symMacroExpand}, {"par", &symPar}, {":", &symBind},
 			{"type-error", &symTypeError}, {"arg-error", &symArgError},
 			{"unbound-error", &symUnboundError}, {"bounds-error", &symBoundsError},
 			{"divide-error", &symDivideError}, {"io-error", &symIOError},

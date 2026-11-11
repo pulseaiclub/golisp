@@ -124,6 +124,51 @@ g.Def("http-get", func(url string) (string, error) {
 })
 ```
 
+## Parallel tasks
+
+`par` schedules one expression on an independent VM and returns a task handle.
+`wait` explicitly joins the task. Copying or passing a handle never waits:
+
+```lisp
+(define (work n) (* n n))
+(: x (par (work 20)))       ; : is shorthand for define
+(: y x)                    ; the same task, without waiting
+(: z (par (work 22)))
+(+ (wait y) (wait z))       ; => 884
+```
+
+Tasks can capture lexical variables, depend on other tasks with `wait`, and
+start nested tasks. `wait` returns one level of result, caches it for repeated
+waits, and propagates task errors (Lisp errors can be caught by `trycatch`).
+Ordinary functions receive task handles as ordinary values; there is no
+implicit waiting. `wait` requires exactly one task.
+
+Each task takes a snapshot of Lisp bindings, closures, modules, and mutable
+Lisp objects when it is created. Its VM stack and managed heap are independent,
+so tasks can execute on different CPU cores while the parent continues to
+compile and evaluate code. Task mutations do not modify the parent's Lisp
+state; return values are copied back on `wait`. Later definitions in the parent
+are not visible to an existing task. Cycles and aliases within a copied object
+graph are preserved. Snapshot creation has a cost proportional to reachable
+state: use `par` for substantial work, not individual arithmetic operations.
+
+Returned functions keep copied lexical captures and module namespaces. Their
+ambient global references resolve in the receiving interpreter, as do module
+fallback references; task globals are not merged back. Capture a value in a
+`let` when a returned function must retain a task-local value.
+
+Tasks inherit the context of the invocation that creates them. Cancelling that
+context stops VM execution cooperatively. A cancelled waiting invocation can
+stop waiting; blocking host operations must themselves support cancellation.
+Unwaited tasks run until completion or context cancellation. The CLI does not
+implicitly join tasks on exit: explicitly `wait` for work that must finish.
+
+Go functions and registered Go objects remain shared host capabilities. Host
+callbacks must use the `*Interp` passed to them and synchronize any shared Go
+state; they must not capture and operate on the parent interpreter or its Lisp
+values. Task isolation does not isolate file, network, or other external side
+effects.
+
 ## Concurrent interpreters
 
 Each `Interp` owns its Lisp bindings, macro definitions, builtins, heap, VM

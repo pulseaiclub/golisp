@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // IOStream is the common stream object behind files, standard handles and
@@ -16,20 +18,24 @@ type IOStream struct {
 	wr     io.Writer
 	closer io.Closer
 
-	br *bufio.Reader
-	bw *bufio.Writer
+	// Keep read and write locks separate so a blocked read permits writes.
+	readMu  sync.Mutex // protects br and reads from rd
+	writeMu sync.Mutex // protects bw and writes to wr
+	br      *bufio.Reader
+	bw      *bufio.Writer
 
 	name   string
 	kind   string // "file", "tcp", "stdio"
-	closed bool
+	closed atomic.Bool
 }
 
 func (s *IOStream) errClosed() error {
 	return errors.New(s.name + ": stream is closed")
 }
 
+// reader requires readMu to remain locked until the caller finishes reading.
 func (s *IOStream) reader() (*bufio.Reader, error) {
-	if s.closed {
+	if s.closed.Load() {
 		return nil, s.errClosed()
 	}
 	if s.br == nil {
@@ -42,7 +48,9 @@ func (s *IOStream) reader() (*bufio.Reader, error) {
 }
 
 func (s *IOStream) writeString(text string) error {
-	if s.closed {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.closed.Load() {
 		return s.errClosed()
 	}
 	if s.wr == nil {
@@ -62,6 +70,12 @@ func (s *IOStream) writeString(text string) error {
 }
 
 func (s *IOStream) flush() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.flushLocked()
+}
+
+func (s *IOStream) flushLocked() error {
 	if s.bw != nil {
 		return s.bw.Flush()
 	}
@@ -69,11 +83,20 @@ func (s *IOStream) flush() error {
 }
 
 func (s *IOStream) close() error {
-	if s.closed {
+	if s.closed.Swap(true) {
 		return nil
 	}
+	// TCP writes are unbuffered. Close without waiting for either I/O lock
+	// so net.Conn.Close can interrupt blocked reads and writes.
+	if s.kind == "tcp" && s.closer != nil {
+		return s.closer.Close()
+	}
+	// Files must flush buffered output before closing. Their Close method
+	// can safely run alongside a read, so do not acquire readMu here.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	var first error
-	if err := s.flush(); err != nil {
+	if err := s.flushLocked(); err != nil {
 		first = err
 	}
 	if s.closer != nil {
@@ -81,13 +104,14 @@ func (s *IOStream) close() error {
 			first = err
 		}
 	}
-	s.closed = true
 	return first
 }
 
 // readLine returns one line without its terminator. ok is false at end of
 // stream.
 func (s *IOStream) readLine() (line string, ok bool, err error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
 	br, err := s.reader()
 	if err != nil {
 		return "", false, err
@@ -113,7 +137,9 @@ func (s *IOStream) readLine() (line string, ok bool, err error) {
 }
 
 func (s *IOStream) readAll() (string, error) {
-	if s.closed {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if s.closed.Load() {
 		return "", s.errClosed()
 	}
 	var r io.Reader = s.rd
@@ -131,6 +157,8 @@ func (s *IOStream) readAll() (string, error) {
 }
 
 func (s *IOStream) readN(n int) (string, error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
 	br, err := s.reader()
 	if err != nil {
 		return "", err

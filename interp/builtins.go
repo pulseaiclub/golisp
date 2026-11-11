@@ -118,6 +118,10 @@ func (g *Interp) installCore() {
 		{"listener-port", 0, 1, bListenerPort},
 		{"listener-addr", 0, 1, bListenerAddr},
 
+		// async
+		{"par", 0, 1, bPar},
+		{"wait", 0, 1, bWait},
+
 		// misc
 		{"error", 0, -1, bError},
 		{"raise", 0, 1, bRaise},
@@ -580,6 +584,24 @@ func bRand(g *Interp, args []Value) Value {
 	n := uint64(g.heap.gensymN)*6364136223846793005 + 1442695040888963407
 	return FixnumValue(int64(n>>33) & 0x3fffffff)
 }
+func bPar(g *Interp, args []Value) Value {
+	if len(args) != 1 || AsFunction(args[0]) == nil {
+		raise(symArgError, "par: expected a zero-argument thunk")
+	}
+	return g.newAsyncTask(args[0])
+}
+
+func bWait(g *Interp, args []Value) Value {
+	if len(args) != 1 {
+		raise(symArgError, "wait: expected one task")
+	}
+	t := AsAsyncTask(args[0])
+	if t == nil {
+		raise(symTypeError, "wait: expected task")
+	}
+	return g.waitAsyncTask(t)
+}
+
 func bEval(g *Interp, args []Value) Value {
 	v, err := g.EvalTop(args[0])
 	if err != nil {

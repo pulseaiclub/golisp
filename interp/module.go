@@ -67,6 +67,10 @@ func (m *Module) getMacro(id uint32) Value {
 
 // markModule marks a module's live values for GC.
 func (g *Interp) markModule(m *Module) {
+	if m == nil || g.gcModules[m] {
+		return
+	}
+	g.gcModules[m] = true
 	for _, v := range m.globals {
 		g.mark(v)
 	}
@@ -96,6 +100,7 @@ func (g *Interp) envSetGlobal(fn *Function, id uint32, v Value) {
 	}
 	g.setGlobal(id, v)
 }
+
 // currentModule returns the module currently being loaded, if any.
 func (g *Interp) currentModule() *Module {
 	if n := len(g.modStack); n > 0 {

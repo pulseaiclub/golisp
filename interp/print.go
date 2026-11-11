@@ -119,13 +119,13 @@ func printHeap(sb *strings.Builder, v Value, write bool) {
 		case boxTable:
 			fmt.Fprintf(sb, "#<table %d entries>", d.t.Count())
 		case boxStream:
-			if d.s.closed {
+			if d.s.closed.Load() {
 				fmt.Fprintf(sb, "#<stream %s closed>", d.s.name)
 			} else {
 				fmt.Fprintf(sb, "#<stream %s>", d.s.name)
 			}
 		case boxListener:
-			if d.l.closed {
+			if d.l.closed.Load() {
 				fmt.Fprintf(sb, "#<listener %s closed>", d.l.name)
 			} else {
 				fmt.Fprintf(sb, "#<listener %s>", d.l.name)
@@ -134,6 +134,8 @@ func printHeap(sb *strings.Builder, v Value, write bool) {
 			fmt.Fprintf(sb, "#:g%d", d.id)
 		case boxCell:
 			sb.WriteString("#<cell>")
+		case boxAsyncTask:
+			sb.WriteString("#<task>")
 		case boxGoFunc:
 			fmt.Fprintf(sb, "#<go-func %s>", d.name)
 		case boxGoValue:
